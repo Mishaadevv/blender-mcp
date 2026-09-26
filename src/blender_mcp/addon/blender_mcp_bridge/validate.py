@@ -764,3 +764,46 @@ def validate(params: dict) -> dict:
         "total_faces": sum(len(o.data.polygons) for o in objs),
         "checks": [c.as_dict() for c in ordered],
     }
+
+
+def fix_topology(objects: list[bpy.types.Object] | None = None, weld_distance: float = 1e-5) -> dict:
+    """Auto-repair common topology problems: non-manifold edges, flipped normals,
+    loose geometry, and duplicate vertices.
+
+    Returns a report of what was fixed per object.
+    """
+    pool = objects if objects is not None else _mesh_objects()
+    fixed = []
+    for ob in pool:
+        if ob.type != "MESH":
+            continue
+        bm = bmesh.new()
+        bm.from_mesh(ob.data)
+        changes = []
+        nm_before = sum(1 for e in bm.edges if len(e.link_faces) > 2)
+        if nm_before:
+            bmesh.ops.dissolve_limit(bm, angle_limit=math.radians(0.001),
+                                     verts=[v for v in bm.verts if any(len(e.link_faces) > 2 for e in v.link_edges)],
+                                     edges=[e for e in bm.edges if len(e.link_faces) > 2])
+            changes.append(f"dissolved {nm_before} non-manifold edges")
+        loose_v = [v for v in bm.verts if not v.link_edges]
+        loose_e = [e for e in bm.edges if not e.link_faces]
+        if loose_v or loose_e:
+            bmesh.ops.delete(bm, geom=loose_v + loose_e, context="VERTS" if loose_v else "EDGES")
+            changes.append(f"removed {len(loose_v)} loose verts, {len(loose_e)} loose edges")
+        za = [f for f in bm.faces if f.calc_area() < 1e-12]
+        if za:
+            bmesh.ops.delete(bm, geom=za, context="FACES")
+            changes.append(f"removed {len(za)} zero-area faces")
+        bm.normal_update()
+        if len(bm.faces) >= 4 and all(len(e.link_faces) == 2 for e in bm.edges):
+            if bm.calc_volume(signed=True) < 0:
+                bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+                changes.append("flipped inverted normals")
+        bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=weld_distance)
+        bm.to_mesh(ob.data)
+        bm.free()
+        ob.data.update()
+        if changes:
+            fixed.append({"object": ob.name, "fixes": changes})
+    return {"fixed": fixed, "objects_checked": len(pool)}

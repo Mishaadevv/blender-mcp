@@ -563,6 +563,10 @@ def cmd_add_primitive(params):
         assign_material_to(ob, str(params["material"]))
     if params.get("shade_smooth"):
         set_shade_smooth([ob], True, params.get("auto_smooth_angle"))
+    if params.get("auto_uv", True):
+        auto_uv(ob)
+    if params.get("auto_validate", False):
+        auto_validate_after_edit([ob])
     return obj_summary(ob, detailed=True)
 
 
@@ -582,6 +586,10 @@ def cmd_create_mesh(params):
     ob.location = Vector(params.get("location") or (0, 0, 0))
     if params.get("material"):
         assign_material_to(ob, str(params["material"]))
+    if params.get("auto_uv", True):
+        auto_uv(ob)
+    if params.get("auto_validate", False):
+        auto_validate_after_edit([ob])
     bpy.context.view_layer.update()
     return obj_summary(ob, detailed=True)
 
@@ -1279,6 +1287,180 @@ def set_shade_smooth(objs, smooth: bool, auto_smooth_angle=None):
         "shade_smooth": bool(smooth),
         "auto_smooth_angle": auto_smooth_angle,
     }
+
+
+def auto_uv(ob: bpy.types.Object, method: str = "smart_project") -> dict:
+    """Generate UVs for a mesh if it has none.
+
+    Most AI-generated meshes arrive without UVs, which makes texturing
+    impossible. This runs smart_project (or cube_project as fallback) so every
+    mesh is texture-ready out of the box.
+    """
+    if ob.type != "MESH":
+        return {"object": ob.name, "uv": False, "reason": "not a mesh"}
+    me = ob.data
+    if me.uv_layers:
+        return {"object": ob.name, "uv": True, "method": "existing", "layers": len(me.uv_layers)}
+    with active_objects([ob]):
+        with view3d_override():
+            try:
+                bpy.ops.object.mode_set(mode="EDIT")
+                bpy.ops.mesh.select_all(action="SELECT")
+                if method == "cube_project":
+                    bpy.ops.uv.cube_project()
+                else:
+                    bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=0.002)
+                bpy.ops.object.mode_set(mode="OBJECT")
+            except Exception as exc:
+                with contextlib.suppress(Exception):
+                    bpy.ops.object.mode_set(mode="OBJECT")
+                return {"object": ob.name, "uv": False, "reason": str(exc)}
+    return {"object": ob.name, "uv": True, "method": method, "layers": len(me.uv_layers)}
+
+
+def cmd_auto_uv(params):
+    objs = objs_of(params.get("objects") or [bpy.context.view_layer.objects.active.name
+                                            if bpy.context.view_layer.objects.active else None], "MESH")
+    method = str(params.get("method", "smart_project"))
+    results = [auto_uv(ob, method) for ob in objs]
+    return {"results": results, "fixed": sum(1 for r in results if r.get("uv"))}
+
+
+def generate_lods(ob: bpy.types.Object, levels: list[float] | None = None) -> list[dict]:
+    """Generate LOD variants of a mesh using Decimate modifiers.
+
+    Returns a list of LOD info dicts. The original mesh is never modified;
+    each LOD is a separate object with a Decimate modifier.
+    """
+    if ob.type != "MESH":
+        return []
+    if levels is None:
+        levels = [0.5, 0.25, 0.1]
+    lods = []
+    base_name = ob.name
+    for i, ratio in enumerate(levels):
+        lod_name = f"{base_name}_LOD{i+1}"
+        if lod_name in bpy.data.objects:
+            bpy.data.objects.remove(bpy.data.objects[lod_name], do_unlink=True)
+        lod_ob = ob.copy()
+        lod_ob.data = ob.data.copy()
+        lod_ob.name = lod_name
+        for col in ob.users_collection:
+            col.objects.link(lod_ob)
+        mod = lod_ob.modifiers.new(name=f"Decimate_LOD{i+1}", type="DECIMATE")
+        mod.ratio = float(ratio)
+        lods.append({"name": lod_name, "ratio": float(ratio), "modifier": mod.name})
+    return lods
+
+
+def cmd_generate_lods(params):
+    objs = objs_of(params.get("objects"), "MESH")
+    levels = params.get("levels") or [0.5, 0.25, 0.1]
+    results = []
+    for ob in objs:
+        lods = generate_lods(ob, levels)
+        results.append({"object": ob.name, "lods": lods})
+    return {"results": results}
+
+
+def auto_light_scene(target_objects=None, style: str = "three_point") -> list[dict]:
+    """Add a three-point lighting rig aimed at the scene's content.
+
+    Key light (front-left, warm), fill light (front-right, cool, weaker),
+    rim/back light (behind, bright). All aimed at the target centroid.
+    """
+    scene = bpy.context.scene
+    if target_objects:
+        pool = [o for o in target_objects if o.type == "MESH"]
+    else:
+        pool = [o for o in scene.objects if o.type == "MESH" and not o.name.startswith(("Key", "Fill", "Rim"))]
+    if not pool:
+        return []
+    ctr = Vector((0, 0, 0))
+    for ob in pool:
+        ctr += ob.matrix_world.translation
+    ctr /= len(pool)
+    specs = [
+        ("Key", "AREA", (3, -4, 5), 1200, (1.0, 0.95, 0.88), ctr),
+        ("Fill", "AREA", (-4, -3, 3), 600, (0.85, 0.9, 1.0), ctr),
+        ("Rim", "AREA", (0, 5, 4), 1500, (1.0, 1.0, 1.0), ctr),
+    ]
+    created = []
+    for name, kind, loc, energy, color, aim in specs:
+        light_data = bpy.data.lights.new(name, type=kind)
+        light_data.energy = energy
+        light_data.color = color
+        light_data.size = 2.0
+        ob = bpy.data.objects.new(name, light_data)
+        ob.location = Vector(loc)
+        scene.collection.objects.link(ob)
+        aim_at(ob, aim)
+        created.append({"name": name, "type": kind, "energy": energy})
+    return created
+
+
+def cmd_auto_light_scene(params):
+    target_names = params.get("objects")
+    targets = objs_of(target_names) if target_names else None
+    style = str(params.get("style", "three_point"))
+    created = auto_light_scene(targets, style)
+    return {"created": created, "style": style}
+
+
+def camera_focus(camera_name: str, target_name: str) -> dict:
+    """Add a Track To constraint so the camera always looks at the target."""
+    cam = obj_of(camera_name, "CAMERA")
+    target = obj_of(target_name)
+    existing = next((c for c in cam.constraints if c.type == "TRACK_TO"), None)
+    if existing:
+        existing.target = target
+        return {"camera": cam.name, "target": target.name, "constraint": existing.name}
+    con = cam.constraints.new(type="TRACK_TO")
+    con.name = "TrackTo"
+    con.target = target
+    con.track_axis = "TRACK_NEGATIVE_Z"
+    con.up_axis = "UP_Y"
+    return {"camera": cam.name, "target": target.name, "constraint": con.name}
+
+
+def cmd_camera_focus(params):
+    cam = str(params.get("camera") or bpy.context.scene.camera.name if bpy.context.scene.camera else None)
+    target = str(params.get("target"))
+    if not cam or not target:
+        raise CommandError("camera_focus needs a camera name and a target object name.")
+    return camera_focus(cam, target)
+
+
+def cmd_fix_topology(params):
+    names = params.get("objects")
+    objs = objs_of(names, "MESH") if names else [o for o in bpy.context.scene.objects if o.type == "MESH"]
+    weld = float(params.get("weld_distance", 1e-5))
+    return _val.fix_topology(objs, weld)
+
+
+def auto_validate_after_edit(objs, quick: bool = True) -> dict:
+    """Run a quick validation after mesh edits to catch problems early.
+
+    Checks topology, normals, and UVs. Returns a compact summary.
+    """
+    if not objs:
+        return {"checked": 0}
+    checks = ["topology", "normals", "uv"] if quick else None
+    report = _val.validate({"objects": [o.name for o in objs], "checks": checks})
+    return {
+        "checked": len(objs),
+        "verdict": report["verdict"],
+        "score": report["score"],
+        "errors": report["errors"],
+        "warnings": report["warnings"],
+    }
+
+
+def cmd_auto_validate(params):
+    names = params.get("objects")
+    objs = objs_of(names, "MESH") if names else [o for o in bpy.context.scene.objects if o.type == "MESH"]
+    quick = bool(params.get("quick", True))
+    return auto_validate_after_edit(objs, quick)
 
 
 def cmd_shade_smooth(params):
@@ -2491,6 +2673,9 @@ def cmd_batch(params):
             results.append({"index": index, "ok": False, "command": name,
                             "error": f"{type(exc).__name__}: {exc}"})
             if stop_on_error:
+                if params.get("rollback", True):
+                    with contextlib.suppress(Exception):
+                        bpy.ops.ed.undo()
                 break
     return {"steps": len(steps), "executed": len(results),
             "failed": sum(1 for r in results if not r["ok"]),
@@ -2614,4 +2799,11 @@ HANDLERS = {
     "python_env": cmd_python_env,
     "render_report": cmd_render_report,
     "diagnose": cmd_diagnose,
+    # --- v4: quality improvements -------------------------------------------
+    "auto_uv": cmd_auto_uv,
+    "generate_lods": cmd_generate_lods,
+    "auto_light_scene": cmd_auto_light_scene,
+    "camera_focus": cmd_camera_focus,
+    "fix_topology": cmd_fix_topology,
+    "auto_validate": cmd_auto_validate,
 }

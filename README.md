@@ -28,6 +28,12 @@ Point any MCP client at it and the agent can:
 - **Model**: primitives, custom meshes, ~30 bmesh operators (extrude, bevel,
   inset, subdivide, bridge, spin, merge, recalc normals), plus mirror, array,
   screw, weld, remesh, decimate and wireframe
+- **Auto-fix topology**: `blender_fix_topology` repairs non-manifold edges,
+  flipped normals, loose geometry, and duplicate vertices in one call
+- **Auto-UV**: every new mesh gets UVs automatically (`auto_uv=true` by default)
+  via smart_project, so it is texture-ready immediately
+- **LOD generation**: `blender_generate_lods` creates decimated variants for game
+  engines with one call
 - **Shade** with 30 non-destructive modifiers, applied or left live
 - **Unwrap** with smart project, angle/conformal unwrap, island packing and
   welding, and report UV ranges before they become an atlas problem
@@ -40,11 +46,16 @@ Point any MCP client at it and the agent can:
   bodies, cloth, soft bodies, collision and force fields
 - **Light and frame**: sun/area/spot lights, three-point setups, world gradients,
   physical Nishita sky, HDRI, cameras that aim themselves
+- **Smart lighting**: `blender_auto_light_scene` adds a key/fill/rim rig aimed at
+  the scene centroid; `blender_camera_focus` adds a Track To constraint so the
+  camera always looks at a target
 - **See its own work**: `blender_capture_viewport` and `blender_render` return
   the image as an MCP content block, so the agent reviews the render and iterates.
   `blender_render_extras` adds turntables, a near-instant Workbench clay preview,
   render passes and contact sheets
 - **Round-trip** `.blend`, `.glb`, `.gltf`, `.fbx`, `.obj`, `.stl`, `.ply`, `.usd`, `.abc`
+- **Batch safety**: `blender_batch` supports `rollback=true` (default) to undo
+  the last step when `stop_on_error` is set and a step fails
 
 Two things that matter on a big scene:
 
@@ -64,6 +75,9 @@ relying on the model's memory.
   glass with transmission, leather, brushed steel, neon), a declarative
   node-graph builder for anything the presets miss, one-call procedural
   surfaces, world shaders including physical sky and HDRI, and vertex-colour masks
+- **Advanced shading**: triplanar mapping for distortion-free texturing without
+  UVs, procedural micro-surface normals, and ambient occlusion for contact
+  shadows
 - **Pull assets from the internet**: download any URL with a size cap and
   checksum, or search and fetch CC0 HDRIs, textures and models from Poly Haven
   with no API key. Import fbx, obj, gltf, glb, stl, ply, usd, abc, dae and blend
@@ -72,12 +86,22 @@ relying on the model's memory.
   noise and cyclic modifiers, retiming), NLA tracks, drivers with real
   variables, shape keys, physics stepping and baking, the video sequencer, and
   camera orbits, follow constraints and dollies
+- **Camera tools**: `blender_camera_focus` adds a Track To constraint so the
+  camera always looks at a target object; `blender_auto_light_scene` adds a
+  key/fill/rim rig aimed at the scene centroid
 - **See and change everything**: a full settings report, single-setting writes by
   dotted path, a datablock inventory with orphans and linked libraries, script
   discovery, a sandboxed filesystem browser, the Python environment, a render
   report and a `blender_diagnose` health check
+- **Quality workflow**: after any mesh edit, run `blender_fix_topology` to
+  auto-repair non-manifold edges, flipped normals, and loose geometry, then
+  `blender_auto_validate` to verify the result
 - **Manage the environment**: list, enable and disable add-ons, install them from
   a zip, pip-install packages into a project-local directory, and append node
+  groups from other .blend files
+- **Auto-validation**: `blender_auto_validate` runs a quick topology/normals/UV
+  check after mesh edits; `blender_add_primitive` and `blender_create_mesh` accept
+  `auto_validate=true` to validate immediately after creation
   groups from another .blend
 
 **109 tools.** See [Tools](#tools).

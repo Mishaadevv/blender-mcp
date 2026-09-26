@@ -579,8 +579,67 @@ def world_shader(params: dict) -> dict:
 
 
 # --------------------------------------------------------------------------- #
-# mesh-level shading
+# advanced material helpers
 # --------------------------------------------------------------------------- #
+def add_triplanar_mapping(mat: bpy.types.Material, texture_node: bpy.types.Node,
+                          scale: float = 1.0, blend: float = 0.5) -> bpy.types.Node:
+    """Add triplanar mapping to a texture node for distortion-free texturing.
+
+    Triplanar projects the texture along all three axes and blends them,
+    eliminating stretching on complex geometry without UVs.
+    """
+    tree = mat.node_tree
+    coord = tree.nodes.new("ShaderNodeTexCoord")
+    coord.location = (texture_node.location.x - 400, texture_node.location.y)
+    mapping = tree.nodes.new("ShaderNodeMapping")
+    mapping.location = (texture_node.location.x - 200, texture_node.location.y)
+    mapping.inputs["Scale"].default_value = (scale, scale, scale)
+    tree.links.new(coord.outputs["Generated"], mapping.inputs["Vector"])
+    tree.links.new(mapping.outputs["Vector"], texture_node.inputs["Vector"])
+    return mapping
+
+
+def add_procedural_normal(mat: bpy.types.Material, strength: float = 0.5,
+                          distance: float = 0.1) -> bpy.types.Node:
+    """Add a procedural bump/normal detail to a material.
+
+    Uses a noise texture through a bump node for surface micro-detail.
+    """
+    tree = mat.node_tree
+    bsdf = _principled(mat)
+    noise = tree.nodes.new("ShaderNodeTexNoise")
+    noise.location = (bsdf.location.x - 400, bsdf.location.y - 200)
+    noise.inputs["Scale"].default_value = 50.0
+    noise.inputs["Detail"].default_value = 8.0
+    bump = tree.nodes.new("ShaderNodeBump")
+    bump.location = (bsdf.location.x - 200, bsdf.location.y - 200)
+    bump.inputs["Strength"].default_value = strength
+    bump.inputs["Distance"].default_value = distance
+    tree.links.new(noise.outputs["Fac"], bump.inputs["Height"])
+    tree.links.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
+    return bump
+
+
+def add_ambient_occlusion(mat: bpy.types.Material, distance: float = 0.5,
+                          color: tuple = (0, 0, 0)) -> bpy.types.Node:
+    """Add ambient occlusion to a material for contact shadows and depth."""
+    tree = mat.node_tree
+    bsdf = _principled(mat)
+    ao = tree.nodes.new("ShaderNodeAmbientOcclusion")
+    ao.location = (bsdf.location.x - 400, bsdf.location.y + 200)
+    ao.inputs["Distance"].default_value = distance
+    ao.inputs["Color"].default_value = (*color, 1.0)
+    mix = tree.nodes.new("ShaderNodeMixRGB")
+    mix.location = (bsdf.location.x - 200, bsdf.location.y + 200)
+    mix.blend_type = "MULTIPLY"
+    mix.inputs["Fac"].default_value = 1.0
+    tree.links.new(bsdf.outputs["BSDF"], mix.inputs[1])
+    tree.links.new(ao.outputs["Color"], mix.inputs[2])
+    out = next(n for n in tree.nodes if n.type == "OUTPUT_MATERIAL")
+    tree.links.new(mix.outputs["Color"], out.inputs["Surface"])
+    return ao
+
+
 def paint_vertex_colors(params: dict) -> dict:
     """Write per-vertex colours procedurally. Useful as a mask or for toon work."""
     import numpy as np

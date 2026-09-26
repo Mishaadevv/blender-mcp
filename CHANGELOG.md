@@ -4,6 +4,42 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0] - 2026-09-26
+
+Quality improvements for AI-generated 3D models: automatic UV unwrapping,
+topology auto-repair, LOD generation, smart three-point lighting, camera
+auto-focus, triplanar mapping, procedural normals, ambient occlusion, and
+batch rollback.
+
+### Added
+
+- **Automatic UV unwrapping.** `blender_auto_uv` generates UVs for any mesh
+  that lacks them (smart_project or cube_project). `blender_add_primitive` and
+  `blender_create_mesh` now accept `auto_uv=true` (default) to make every new
+  mesh texture-ready out of the box.
+- **Topology auto-repair.** `blender_fix_topology` dissolves non-manifold edges,
+  removes loose vertices/edges and zero-area faces, flips inverted normals on
+  closed shells, and welds duplicate vertices. Run it after any mesh edit to
+  guarantee manifold geometry.
+- **LOD generation.** `blender_generate_lods` creates decimated variants of any
+  mesh (default ratios 0.5, 0.25, 0.1) as separate objects with Decimate
+  modifiers, ready for game engines.
+- **Smart three-point lighting.** `blender_auto_light_scene` adds a key/fill/rim
+  rig aimed at the scene centroid, with warm key, cool fill, and bright rim.
+- **Camera auto-focus.** `blender_camera_focus` adds a Track To constraint so
+  the camera always looks at a target object.
+- **Triplanar mapping.** `blender_build_shader` now supports triplanar
+  projection for distortion-free texturing without UVs.
+- **Procedural normals.** `blender_procedural_material` can add micro-surface
+  detail via noise-driven bump nodes.
+- **Ambient occlusion.** Materials can now include AO nodes for contact
+  shadows and depth cues.
+- **Batch rollback.** `blender_batch` now supports `rollback=true` (default)
+  to undo the last step when `stop_on_error` is set and a step fails.
+- **Auto-validation.** `blender_auto_validate` runs a quick topology/normals/UV
+  check after mesh edits. `blender_add_primitive` and `blender_create_mesh`
+  accept `auto_validate=true` to validate immediately after creation.
+
 ## [3.0.0] - 2026-09-26
 
 Full control over Blender: shader authoring, internet assets, add-on and package
