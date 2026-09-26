@@ -52,6 +52,35 @@ LIBRARIES = {
         "types": ("hdris", "textures", "models"),
         "needs_key": False,
     },
+    "ambientcg": {
+        "label": "AmbientCG (CC0 PBR materials, models)",
+        "api": "https://ambientcg.com/api/v2/full_json",
+        "file_api": "https://ambientcg.com/api/v2/downloads",
+        "types": ("textures", "models"),
+        "needs_key": False,
+    },
+}
+
+# Sources that require an API key (user must provide via params)
+KEY_REQUIRED_LIBRARIES = {
+    "sketchfab": {
+        "label": "Sketchfab (requires API key)",
+        "api": "https://api.sketchfab.com/v3/search",
+        "types": ("models",),
+        "needs_key": True,
+    },
+    "cgtrader": {
+        "label": "CGTrader (requires API key)",
+        "api": "https://api.cgtrader.com/api/v1/search",
+        "types": ("models",),
+        "needs_key": True,
+    },
+    "turbosquid": {
+        "label": "TurboSquid (requires API key)",
+        "api": "https://api.turbosquid.com/api/v1/search",
+        "types": ("models",),
+        "needs_key": True,
+    },
 }
 
 
@@ -323,16 +352,20 @@ def list_libraries(params: dict) -> dict:
 def search_library(params: dict) -> dict:
     """Search a free CC0 asset library. Poly Haven needs no API key."""
     library = str(params.get("library", "polyhaven"))
-    if library not in LIBRARIES:
+    if library not in LIBRARIES and library not in KEY_REQUIRED_LIBRARIES:
         raise CommandError(f"unknown library {library!r}; have "
-                           + ", ".join(LIBRARIES))
-    spec = LIBRARIES[library]
-    kind = str(params.get("type", "hdris")).lower()
+                           + ", ".join(list(LIBRARIES) + list(KEY_REQUIRED_LIBRARIES)))
+    spec = LIBRARIES.get(library) or KEY_REQUIRED_LIBRARIES[library]
+    kind = str(params.get("type", "models")).lower()
     if kind not in spec["types"]:
         raise CommandError(f"{library} has no {kind!r}; types: "
                            + ", ".join(spec["types"]))
     query = str(params.get("query", "")).strip().lower()
     limit = int(params.get("limit", 25))
+    if library == "ambientcg":
+        return _search_ambientcg(query, limit, kind)
+    if library in KEY_REQUIRED_LIBRARIES:
+        return _search_key_required(library, query, limit, kind, params.get("api_key"))
     assets = _api_get(f"{spec['api']}?t={kind}")
     if not isinstance(assets, dict):
         raise CommandError(f"unexpected response from {library}")
@@ -349,13 +382,83 @@ def search_library(params: dict) -> dict:
     return {"library": library, "type": kind, "count": len(rows), "assets": rows}
 
 
+def _search_ambientcg(query: str, limit: int, kind: str) -> dict:
+    """Search AmbientCG (CC0 PBR materials, models)."""
+    url = f"https://ambientcg.com/api/v2/full_json?include=downloadData&limit={limit}"
+    if query:
+        url += f"&q={urllib.parse.quote(query)}"
+    data = _api_get(url)
+    assets = data.get("foundAssets", data.get("assets", []))
+    rows = []
+    for item in assets[:limit]:
+        asset_id = item.get("assetId", item.get("id", ""))
+        name = item.get("displayName", item.get("name", asset_id))
+        if query and query not in name.lower() and query not in asset_id.lower():
+            continue
+        rows.append({
+            "id": asset_id,
+            "name": name,
+            "tags": item.get("categories", [])[:8],
+            "type": kind,
+        })
+    return {"library": "ambientcg", "type": kind, "count": len(rows), "assets": rows}
+
+
+def _search_key_required(library: str, query: str, limit: int, kind: str, api_key: str) -> dict:
+    """Search a library that requires an API key (Sketchfab, CGTrader, TurboSquid)."""
+    if not api_key:
+        raise CommandError(f"{library} requires an 'api_key' parameter")
+    spec = KEY_REQUIRED_LIBRARIES[library]
+    url = f"{spec['api']}?type={kind}&q={urllib.parse.quote(query)}&count={limit}"
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Authorization": f"Token {api_key}"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        raise CommandError(f"{library} request failed: {exc}") from exc
+    results = data.get("results", data.get("data", []))
+    rows = []
+    for item in results[:limit]:
+        rows.append({
+            "id": str(item.get("uid", item.get("id", item.get("slug", "")))),
+            "name": item.get("name", "Unknown"),
+            "tags": item.get("tags", [])[:8],
+            "type": kind,
+        })
+    return {"library": library, "type": kind, "count": len(rows), "assets": rows}
+
+
+def _fetch_ambientcg(asset_id: str, kind: str, params: dict) -> dict:
+    """Download an AmbientCG asset (CC0 PBR materials, models)."""
+    data = _api_get(f"https://ambientcg.com/api/v2/downloads/{asset_id}")
+    downloads = data.get("downloads", [])
+    if not downloads:
+        raise CommandError(f"no download links for AmbientCG asset {asset_id!r}")
+    url = downloads[0].get("downloadLink", "")
+    if not url:
+        raise CommandError(f"no download URL for AmbientCG asset {asset_id!r}")
+    ext = os.path.splitext(url)[1] or ".zip"
+    target = os.path.join(_root(f"ambientcg/{kind}"), f"{asset_id}{ext}")
+    result = _download(url, target, int(params.get("max_bytes", DEFAULT_MAX_BYTES)),
+                       float(params.get("timeout", 180.0)))
+    result["asset_id"] = asset_id
+    result["library"] = "ambientcg"
+    result["type"] = kind
+    if params.get("import", True) and ext.lower() not in {".zip"}:
+        imported = import_asset({"path": target, "into_collection": params.get("into_collection")})
+        result["imported"] = imported
+    return result
+
+
 def fetch_from_library(params: dict) -> dict:
     """Download an asset from a library, and optionally import or shade it."""
     library = str(params.get("library", "polyhaven"))
     asset_id = str(params.get("id", ""))
     if not asset_id:
         raise CommandError("fetch_from_library needs an 'id' from search_library")
-    kind = str(params.get("type", "hdris"))
+    kind = str(params.get("type", "models"))
+    if library == "ambientcg":
+        return _fetch_ambientcg(asset_id, kind, params)
     spec = LIBRARIES[library]
     resolution = str(params.get("resolution", "1k"))
     files = _api_get(f"{spec['file_api']}/{asset_id}")
