@@ -251,7 +251,8 @@ class BridgeServer:
             except OSError as exc:
                 self.last_error = f"accept failed: {exc}"
                 return
-            client.setblocking(True)
+            # _Connection sets its own non-blocking mode; setting it here first
+            # would be immediately overwritten.
             self._connections.append(_Connection(client))
             if self.request_count == 0:
                 log.info("MCP client connected from %s", address)
