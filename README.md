@@ -104,7 +104,7 @@ relying on the model's memory.
   `auto_validate=true` to validate immediately after creation
   groups from another .blend
 
-**109 tools.** See [Tools](#tools).
+**122 tools.** See [Tools](#tools).
 
 ## Install
 
@@ -291,7 +291,7 @@ Practical measures:
 ```bash
 python -m venv .venv && .venv/Scripts/python -m pip install -e ".[dev]"
 
-# 126 checks against a real Blender: geometry, bmesh, materials, render, export,
+# 142 checks against a real Blender: geometry, bmesh, materials, render, export,
 .venv/Scripts/python scripts/selftest.py
 
 #   plus validation, textures, context, geometry, UV, batching and undo safety

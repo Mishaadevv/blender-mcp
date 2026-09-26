@@ -22,3 +22,7 @@ Thumbs.db
 # Local renders produced by the test scripts
 *.png
 !docs/**/*.png
+
+# Local packaging snapshots, not source
+blender-mcp-fixed.zip
+*.zip

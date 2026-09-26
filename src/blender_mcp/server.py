@@ -16,7 +16,18 @@ from pydantic import Field
 
 from .client import BRIDGE, BlenderError
 from .formatting import failure, respond
-from .addon.blender_mcp_bridge.quality_guidelines import QUALITY_SYSTEM_PROMPT
+
+# The quality guidelines are pure data and live with the addon so both sides read
+# one copy. That import must never be able to take the server down with it, so a
+# failure here degrades to "no extra guidance" instead of a dead server.
+try:
+    from .addon.blender_mcp_bridge.quality_guidelines import QUALITY_SYSTEM_PROMPT
+except Exception as _quality_error:  # noqa: BLE001
+    QUALITY_SYSTEM_PROMPT = ""
+    print(
+        "[blender-mcp] quality guidelines unavailable, continuing without them: "
+        f"{type(_quality_error).__name__}: {_quality_error}"
+    )
 
 INSTRUCTIONS = """
 Control a running Blender 4.5 LTS instance over its local MCP bridge.
@@ -79,7 +90,7 @@ Texture and animation tools:
 mcp = MCPServer(
     name="blender",
     title="Blender 4.5 LTS",
-    version="3.0.0",
+    version="4.4.0",
     instructions=INSTRUCTIONS,
 )
 
@@ -2500,6 +2511,279 @@ def blender_diagnose(response_format: FORMAT = "markdown") -> Any:
     Cheaper than a full validate when you just want to know what is wrong.
     """
     return respond(call("diagnose", {}), response_format, title="Diagnosis")
+
+
+# =========================================================================== #
+# v4: automated quality, LODs, lighting, textures, animation sources
+# =========================================================================== #
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_auto_uv(
+    objects: Annotated[list[str] | None, Field(
+        description="Target meshes; defaults to the active object.")] = None,
+    method: Annotated[Literal["smart_project", "unwrap", "cube", "sphere",
+                                "cylinder", "lightmap"], Field(
+        description="Projection method.")] = "smart_project",
+    angle_limit_deg: Annotated[float, Field(
+        description="Smart project angle limit.")] = 66.0,
+    margin: Annotated[float, Field(description="Island margin, 0..1.")] = 0.002,
+    scale_to_bounds: bool = False,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Unwrap meshes in one call and report the resulting UV coverage.
+
+    Picks a projection automatically when `method` is left at the default, so a
+    scene of mixed hard-surface and organic meshes does not need hand-picking
+    per object.
+    """
+    return respond(call("auto_uv", {
+        "objects": objects, "method": method, "angle_limit_deg": angle_limit_deg,
+        "margin": margin, "scale_to_bounds": scale_to_bounds,
+    }), response_format, title="Automatic UVs")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_fix_uv_mapping(
+    objects: Annotated[list[str] | None, Field(
+        description="Target meshes; defaults to the active object.")] = None,
+    method: Annotated[Literal["smart_project", "unwrap"], Field(
+        description="Repair method.")] = "smart_project",
+    angle_limit_deg: float = 66.0,
+    margin: float = 0.002,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Repair stretched, overlapping or out-of-range UVs on existing meshes,
+    then report what changed per object.
+    """
+    return respond(call("fix_uv_mapping", {
+        "objects": objects, "method": method, "angle_limit_deg": angle_limit_deg,
+        "margin": margin,
+    }), response_format, title="UVs repaired")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_generate_lods(
+    objects: Annotated[list[str] | None, Field(
+        description="Meshes to duplicate into LODs.")] = None,
+    levels: Annotated[list[float], Field(
+        description="Decimate ratios, e.g. [0.5, 0.25, 0.1].")] = [0.5, 0.25, 0.1],
+    suffix: Annotated[str, Field(
+        description="Name suffix pattern; {level} is replaced.")] = "_LOD{level}",
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Create decimated LOD copies of meshes and put them in a LOD collection.
+
+    Reports the original and generated face counts so the trade-off is visible
+    instead of assumed.
+    """
+    return respond(call("generate_lods", {"objects": objects, "levels": levels,
+                                          "suffix": suffix}),
+                   response_format, title="LODs generated")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_fix_topology(
+    objects: Annotated[list[str] | None, Field(
+        description="Meshes to repair; defaults to the selection.")] = None,
+    weld_distance: Annotated[float, Field(
+        description="Merge distance for duplicate vertices.")] = 1e-4,
+    recalc_normals: bool = True,
+    remove_loose: bool = True,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Repair mesh problems: merge duplicate vertices, recalculate normals and
+    delete loose geometry, reporting the before/after counts per object.
+    """
+    return respond(call("fix_topology", {
+        "objects": objects, "weld_distance": weld_distance,
+        "recalc_normals": recalc_normals, "remove_loose": remove_loose,
+    }), response_format, title="Topology repaired")
+
+
+@mcp.tool(annotations=READ)
+@guard
+def blender_auto_validate(
+    objects: Annotated[list[str] | None, Field(
+        description="Restrict the audit to these objects.")] = None,
+    quick: Annotated[bool, Field(
+        description="Skip the expensive intersection pass.")] = False,
+    apply_fixes: Annotated[bool, Field(
+        description="Fix what is safely fixable (topology, UVs, materials).")] = False,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Audit a generated model end to end and, with `apply_fixes`, repair the
+    problems that have an unambiguous fix.
+
+    Built for the "I just generated this, is it usable" question: topology, UVs,
+    materials, scale and naming in one pass.
+    """
+    return respond(call("auto_validate", {
+        "objects": objects, "quick": quick, "apply_to": apply_fixes,
+    }), response_format, title="Automated validation")
+
+
+@mcp.tool(annotations=READ)
+@guard
+def blender_quality_guidelines(
+    query: Annotated[str, Field(
+        description="Free-text filter, e.g. 'wheels' or 'realism'.")] = "",
+    limit: int = 40,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Fetch the modelling quality guidelines the agent should follow.
+
+    Covers the things that actually decide whether a generated model reads as
+    believable: real proportions instead of convenient ones, built structure
+    rather than modifier stacks, deliberate camera and lighting before a render,
+    and texture resolution that survives a close-up.
+    """
+    return respond(call("get_quality_guidelines", {"query": query, "limit": limit}),
+                   response_format, title="Quality guidelines")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_auto_light_scene(
+    style: Annotated[Literal["three_point", "studio", "outdoor", "dramatic",
+                             "product"], Field(
+        description="Lighting setup to build.")] = "three_point",
+    objects: Annotated[list[str] | None, Field(
+        description="Objects the lights should frame.")] = None,
+    apply: bool = True,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Build a complete lighting rig aimed at the subject.
+
+    Framing is derived from the target objects' bounds, so the lights land at a
+    sensible distance instead of at a hard-coded guess.
+    """
+    return respond(call("auto_light_scene", {
+        "objects": objects, "style": style, "apply_to": apply,
+    }), response_format, title="Lighting rig")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_camera_focus(
+    target: Annotated[str, Field(
+        description="Object or empty to aim at.")],
+    camera: Annotated[str, Field(
+        description="Camera name; defaults to the active camera.")] = "",
+    fit_distance: Annotated[bool, Field(
+        description="Pull the camera back until the target fits the frame.")] = True,
+    objects: Annotated[list[str] | None, Field(
+        description="Objects to frame when fitting the distance.")] = None,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Aim a camera at something and, optionally, frame it.
+
+    Saves a lot of blind iteration on 'why is my render empty'.
+    """
+    return respond(call("camera_focus", {
+        "target": target, "camera": camera, "objects": objects,
+        "weld_distance": None,
+    }), response_format, title="Camera aimed")
+
+
+@mcp.tool(annotations=SLOW)
+@guard
+def blender_download_textures(
+    query: Annotated[str, Field(
+        description="What to look for, e.g. 'rust' or 'concrete'.")] = "",
+    library: Annotated[str, Field(description="Asset library id.")] = "ambientcg",
+    limit: int = 25,
+    apply_to: Annotated[list[str] | None, Field(
+        description="Objects to apply the downloaded texture to.")] = None,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Search a free PBR texture library and download matching maps.
+
+    Pass `apply_to` to wire the result onto objects in the same call.
+    """
+    return respond(call("download_textures", {
+        "query": query, "library": library, "limit": limit, "apply_to": apply_to,
+    }), response_format, title="Textures")
+
+
+@mcp.tool(annotations=SLOW)
+@guard
+def blender_download_animations(
+    query: Annotated[str, Field(
+        description="What to look for, e.g. 'walk' or 'idle'.")] = "",
+    source: Annotated[str, Field(description="Animation source id.")] = "mixamo",
+    limit: int = 20,
+    apply_to: Annotated[list[str] | None, Field(
+        description="Objects to attach the animation to.")] = None,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Search downloadable animation sources and list what is available.
+
+    Pass `apply_to` to import and attach the result in the same call.
+    """
+    return respond(call("download_animations", {
+        "query": query, "source": source, "limit": limit, "apply_to": apply_to,
+    }), response_format, title="Animations")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_create_animation(
+    type: Annotated[Literal["spin", "bounce", "orbit", "pulse", "wave", "idle"],
+                    Field(description="Animation to generate.")] = "spin",
+    objects: Annotated[list[str] | None, Field(
+        description="Objects to animate; defaults to the selection.")] = None,
+    frames: int = 48,
+    start_frame: int = 1,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Generate a procedural animation on the given objects.
+
+    Useful for previews and for checking that a rig actually moves something
+    before spending time on a real animation.
+    """
+    return respond(call("create_animation", {
+        "objects": objects, "type": type, "frames": frames,
+        "start_frame": start_frame,
+    }), response_format, title="Animation created")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_paint_texture(
+    object: str,
+    image: Annotated[str, Field(
+        description="Name of an existing image datablock to paint into.")] = "",
+    width: int = 1024,
+    height: int = 1024,
+    color: Annotated[list[float], Field(
+        description="RGB 0-1 paint colour.")] = [1.0, 0.0, 0.0],
+    mode: Annotated[Literal["fill", "gradient", "checker"], Field(
+        description="How to paint.")] = "fill",
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Paint directly into an image datablock and write it to disk.
+
+    For placing decals, number plates, liveries or wear masks without leaving
+    Blender.
+    """
+    return respond(call("paint_texture", {
+        "object": object, "image": image, "width": width, "height": height,
+        "color": color, "mode": mode,
+    }), response_format, title="Texture painted")
+
+
+@mcp.tool(annotations=READ)
+@guard
+def blender_list_installed_addons(response_format: FORMAT = "markdown") -> Any:
+    """List the add-ons Blender currently has enabled, with versions and the
+    module names needed by `blender_manage_addon`."""
+    return respond(call("list_installed_addons", {}),
+                   response_format, title="Installed add-ons")
 
 
 def main() -> None:  # pragma: no cover

@@ -4,6 +4,56 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.4.0] - 2026-09-26
+
+### Fixed
+- **The MCP server no longer crashes on startup.** `server.py` pulled the quality
+  guidelines prompt through the Blender addon package, whose `__init__.py` imports
+  `bpy`. Outside Blender that raised `ModuleNotFoundError: No module named 'bpy'`
+  and the server could not start at all, so every tool was unreachable. The addon
+  package now imports cleanly without `bpy` and registers the Blender-only parts
+  lazily, and the server degrades gracefully if the prompt is ever unavailable
+  again.
+- `camera_focus` no longer resolves to the literal string `"None"`. An operator
+  precedence mistake in the camera lookup meant a missing camera produced a
+  truthy `"None"` that slipped past the guard and failed deep in the scene
+  lookup. It now falls back to the active scene camera, accepts a name, an
+  object or a `{"name": ...}` dict, and reports a clear error when there is no
+  camera or no target.
+- Version numbers are no longer inconsistent across `pyproject.toml`,
+  `server.py` and the addon's `bl_info`.
+
+### Added
+- 13 tools for the v4.0-4.3 handlers, which existed in the addon but were never
+  exposed and therefore could not be called by an agent: `blender_auto_uv`,
+  `blender_fix_uv_mapping`, `blender_generate_lods`, `blender_fix_topology`,
+  `blender_auto_validate`, `blender_quality_guidelines`,
+  `blender_auto_light_scene`, `blender_camera_focus`,
+  `blender_download_textures`, `blender_download_animations`,
+  `blender_create_animation`, `blender_paint_texture` and
+  `blender_list_installed_addons`. Tool count is now 122.
+- 16 end-to-end checks covering the v4 automation surface, plus explicit
+  failure cases for `camera_focus`. Selftest is now 142 checks.
+
+## [4.3.0] - 2026-09-26
+
+### Added
+- `download_animations` and `create_animation` for motion work.
+- `paint_texture` for writing image datablocks to disk.
+- `fix_uv_mapping` and `list_installed_addons`.
+
+## [4.2.0] - 2026-09-26
+
+### Added
+- Multi-library model search and download.
+
+## [4.1.0] - 2026-09-26
+
+### Added
+- Quality guidelines module and the `auto_uv`, `generate_lods`,
+  `auto_light_scene`, `camera_focus`, `fix_topology` and `auto_validate`
+  handlers.
+
 ## [4.0.0] - 2026-09-26
 
 Quality improvements for AI-generated 3D models: automatic UV unwrapping,

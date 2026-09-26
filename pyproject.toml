@@ -1,6 +1,6 @@
 [project]
 name = "blender-mcp-server"
-version = "3.0.0"
+version = "4.4.0"
 description = "MCP server that drives a live Blender 4.5 LTS instance: modelling, materials, lighting, rendering and image feedback"
 readme = "README.md"
 requires-python = ">=3.11"

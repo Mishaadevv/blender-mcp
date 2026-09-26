@@ -7,7 +7,7 @@ Install: Edit > Preferences > Add-ons > Install..., pick the
 bl_info = {
     "name": "MCP Bridge",
     "author": "local",
-    "version": (1, 0, 0),
+    "version": (4, 4, 0),
     "blender": (4, 2, 0),
     "location": "3D Viewport > Sidebar > MCP",
     "description": "Loopback socket bridge so an MCP server can drive this Blender instance",
@@ -16,12 +16,26 @@ bl_info = {
 
 import os
 
-import bpy
+# ``bpy`` only exists inside Blender. The MCP server imports the pure-data
+# ``quality_guidelines`` module from this same package, so a hard ``import bpy``
+# here would stop the server from starting at all. Import the Blender-only parts
+# lazily and fail loudly only when someone actually tries to register.
+try:  # pragma: no cover - exercised inside Blender
+    import bpy  # noqa: F401
+    _IN_BLENDER = True
+except ModuleNotFoundError:  # pragma: no cover - exercised outside Blender
+    bpy = None
+    _IN_BLENDER = False
 
-from .bridge import SERVER
-from .commands import HANDLERS
-from .ui import register as register_ui
-from .ui import unregister as unregister_ui
+if _IN_BLENDER:
+    from .bridge import SERVER
+    from .commands import HANDLERS
+    from .ui import register as register_ui
+    from .ui import unregister as unregister_ui
+else:  # pragma: no cover
+    SERVER = None
+    HANDLERS: dict = {}
+    register_ui = unregister_ui = None
 
 
 def _autostart():
@@ -41,6 +55,10 @@ def _autostart():
 
 
 def register():
+    if not _IN_BLENDER:
+        raise RuntimeError(
+            "blender_mcp_bridge.register() only runs inside Blender; it needs bpy."
+        )
     SERVER.register_handlers(HANDLERS)
     register_ui()
     _autostart()
@@ -55,5 +73,7 @@ def register():
 
 
 def unregister():
+    if not _IN_BLENDER:
+        return
     unregister_ui()
     SERVER.stop()

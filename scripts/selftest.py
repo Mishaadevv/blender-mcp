@@ -573,6 +573,60 @@ def main() -> int:
             "path": str(Path(os.environ.get("TEMP", "/tmp")) / "selftest_export.glb"),
             "objects": ["GeoTarget"]}, timeout=300)["format"] == "GLB", "glb written"))
 
+    print("\n19. v4 quality automation")
+    check("auto_uv unwraps a mesh", lambda: assert_true(
+        BRIDGE.call("auto_uv", {"objects": ["GeoTarget"]},
+                    timeout=180)["results"], "results returned"))
+    check("fix_uv_mapping runs", lambda: assert_true(
+        BRIDGE.call("fix_uv_mapping", {"objects": ["GeoTarget"]},
+                    timeout=180)["results"], "report returned"))
+    check("generate_lods makes decimated copies", lambda: assert_true(
+        BRIDGE.call("generate_lods", {"objects": ["GeoTarget"],
+                                      "levels": [0.5, 0.25]},
+                    timeout=240)["results"], "lods returned"))
+    check("fix_topology reports before and after", lambda: assert_true(
+        BRIDGE.call("fix_topology", {"objects": ["GeoTarget"]},
+                    timeout=180)["objects_checked"], "repaired"))
+    check("auto_validate audits", lambda: assert_true(
+        BRIDGE.call("auto_validate", {"quick": True},
+                    timeout=240)["checked"], "audited"))
+    check("quality guidelines are served", lambda: assert_true(
+        len(BRIDGE.call("get_quality_guidelines", {"limit": 5}, timeout=120)) > 0,
+        "guidelines returned"))
+    check("auto_light_scene builds a rig", lambda: assert_true(
+        BRIDGE.call("auto_light_scene", {"style": "three_point",
+                                         "objects": ["GeoTarget"]},
+                    timeout=180)["created"], "lights created"))
+    check("camera_focus aims a camera", lambda: assert_true(
+        BRIDGE.call("camera_focus", {"target": "GeoTarget"}, timeout=180),
+        "aimed"))
+    check("camera_focus falls back to the active camera", lambda: assert_true(
+        BRIDGE.call("camera_focus", {"target": "GeoTarget", "camera": ""},
+                    timeout=180), "aimed at active camera"))
+    check("camera_focus rejects a camera that does not exist",
+          lambda: _expect_error(
+              BRIDGE.call, "camera_focus",
+              {"target": "GeoTarget", "camera": "NoSuchCamera_zz"},
+              needle="not found"))
+    check("camera_focus needs a target", lambda: _expect_error(
+        BRIDGE.call, "camera_focus", {"target": ""}, needle="target"))
+    check("create_animation keys the object", lambda: assert_true(
+        BRIDGE.call("create_animation", {"objects": ["GeoTarget"],
+                                         "type": "spin", "frames": 12},
+                    timeout=180)["animations"], "animated"))
+    check("paint_texture writes an image", lambda: assert_true(
+        BRIDGE.call("paint_texture", {"object": "GeoTarget", "width": 128,
+                                      "height": 128, "mode": "gradient"},
+                    timeout=180)["image"], "image written"))
+    check("list_installed_addons", lambda: assert_true(
+        len(BRIDGE.call("list_installed_addons", {}, timeout=180)) > 0, "listed"))
+    check("download_textures searches a library", lambda: assert_true(
+        BRIDGE.call("download_textures", {"query": "rust", "limit": 3},
+                    timeout=300)["library"], "searched"))
+    check("download_animations lists sources", lambda: assert_true(
+        BRIDGE.call("download_animations", {"query": "walk", "limit": 3},
+                    timeout=300)["note"], "searched"))
+
     BRIDGE.shutdown()
 
     failures = [r for r in results if r[0] == FAIL]

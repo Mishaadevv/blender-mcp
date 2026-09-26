@@ -800,11 +800,19 @@ def cmd_add_modifier(params):
             if ng is None:
                 raise CommandError(f"Geometry node group {node_group!r} not found.")
             mod.node_group = ng
-    apply_params(mod, params.get("properties") or {})
+    skipped = apply_params(mod, params.get("properties") or {})
     for key, value in (params.get("flags") or {}).items():
         setattr(mod, key, value)
     bpy.context.view_layer.update()
-    return {"object": ob.name, "modifier": modifier_summary(mod)}
+    result = {"object": ob.name, "modifier": modifier_summary(mod)}
+    if skipped:
+        result["warning"] = (
+            f"These properties were NOT applied (unknown for modifier type "
+            f"{mod.type!r}, or wrong value type): {skipped}. Use "
+            f"blender_list_operators / blender_search_api to find the correct "
+            f"property names before retrying."
+        )
+    return result
 
 
 def modifier_summary(mod) -> dict:
@@ -1085,7 +1093,7 @@ def cmd_set_material_node(params):
     node = tree.nodes.new(node_type)
     node.name = str(params.get("node_name") or node_type.split("Tex")[-1])
     node.label = str(params.get("node_name") or node.bl_label)
-    apply_params(node, params.get("properties") or {})
+    skipped = apply_params(node, params.get("properties") or {})
     if params.get("image"):
         image = load_image(params["image"])
         if image is not None and node_type == "ShaderNodeTexImage":
@@ -1106,7 +1114,10 @@ def cmd_set_material_node(params):
                 f"Available: {[s.name for s in bsdf.inputs]}"
             )
         tree.links.new(out, inp)
-    return {"material": mat.name, "node": node.name, "type": node.bl_idname}
+    result = {"material": mat.name, "node": node.name, "type": node.bl_idname}
+    if skipped:
+        result["warning"] = f"These node properties were NOT applied: {skipped}"
+    return result
 
 
 def load_image(path: str):
@@ -1423,11 +1434,32 @@ def camera_focus(camera_name: str, target_name: str) -> dict:
     return {"camera": cam.name, "target": target.name, "constraint": con.name}
 
 
+def _object_name(value):
+    """Accept a name, an object, or an {"name": ...} dict from a tool layer."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    name = getattr(value, "name", None)
+    if name:
+        return str(name)
+    if isinstance(value, dict):
+        return str(value.get("name") or "").strip()
+    return str(value).strip()
+
+
 def cmd_camera_focus(params):
-    cam = str(params.get("camera") or bpy.context.scene.camera.name if bpy.context.scene.camera else None)
-    target = str(params.get("target"))
-    if not cam or not target:
-        raise CommandError("camera_focus needs a camera name and a target object name.")
+    cam = _object_name(params.get("camera"))
+    if not cam and bpy.context.scene.camera is not None:
+        cam = _object_name(bpy.context.scene.camera)
+    target = _object_name(params.get("target"))
+    if not cam:
+        raise CommandError(
+            "camera_focus needs a camera: pass 'camera', or make one the "
+            "active scene camera first."
+        )
+    if not target:
+        raise CommandError("camera_focus needs a target object to aim at.")
     return camera_focus(cam, target)
 
 
