@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "blender": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/Mishaadevv/blender-mcp", "blender-mcp"]
+    }
+  }
+}

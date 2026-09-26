@@ -42,13 +42,13 @@ Requires **Python 3.11+** and **Blender 4.2+** (developed and tested against
 4.5 LTS). No `git clone` needed if you use `uvx`:
 
 ```bash
-uvx --from git+https://github.com/misakolot6-netizen/blender-mcp blender-mcp
+uvx --from git+https://github.com/Mishaadevv/blender-mcp blender-mcp
 ```
 
 or with pip:
 
 ```bash
-pip install git+https://github.com/misakolot6-netizen/blender-mcp
+pip install git+https://github.com/Mishaadevv/blender-mcp
 ```
 
 ### 1. Install the Blender addon

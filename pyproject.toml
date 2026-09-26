@@ -1,6 +1,6 @@
 [project]
 name = "blender-mcp-server"
-version = "1.0.0"
+version = "1.1.0"
 description = "MCP server that drives a live Blender 4.5 LTS instance: modelling, materials, lighting, rendering and image feedback"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -28,9 +28,9 @@ blender-mcp = "blender_mcp.server:main"
 blender-mcp-setup = "blender_mcp.setup:main"
 
 [project.urls]
-Homepage = "https://github.com/misakolot6-netizen/blender-mcp"
-Repository = "https://github.com/misakolot6-netizen/blender-mcp"
-Issues = "https://github.com/misakolot6-netizen/blender-mcp/issues"
+Homepage = "https://github.com/Mishaadevv/blender-mcp"
+Repository = "https://github.com/Mishaadevv/blender-mcp"
+Issues = "https://github.com/Mishaadevv/blender-mcp/issues"
 
 [build-system]
 requires = ["hatchling"]
