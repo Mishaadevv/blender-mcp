@@ -1,0 +1,13 @@
+# Normalise line endings in the repository; check out native per platform.
+* text=auto eol=lf
+
+*.py   text diff=python
+*.md   text
+*.toml text
+*.json text
+*.yml  text
+
+# The Blender addon is imported by Blender, never executed on Windows directly.
+*.blend binary
+*.blend1 binary
+*.png  binary
