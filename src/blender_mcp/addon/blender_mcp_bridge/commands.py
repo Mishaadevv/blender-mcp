@@ -21,6 +21,9 @@ import bpy
 from mathutils import Euler, Matrix, Quaternion, Vector
 
 from .bridge import CommandError, view3d_override
+from . import ops as _ops
+from . import textures as _tex
+from . import validate as _val
 
 # --------------------------------------------------------------------------- #
 # generic helpers
@@ -2099,6 +2102,185 @@ def cmd_search_blender_docs(params):
     return {"query": query, "matches": sorted(hits)}
 
 
+# --------------------------------------------------------------------------- #
+# v2 additions: validation, textures, extended operations
+# --------------------------------------------------------------------------- #
+def cmd_validate(params):
+    """Full model audit: scale, dimensions, normals, topology, intersections,
+    symmetry, naming, materials, UVs, transforms, pivots, budget, LODs."""
+    return _val.validate(params)
+
+
+def cmd_analyze_mesh(params):
+    """Deep statistics for a single mesh: manifoldness, shell volume, areas,
+    loose and duplicate geometry, UV and modifier inventory."""
+    return _val.analyze_mesh(params)
+
+
+def cmd_measure(params):
+    """Real-world measurements: bounding box, centre distance, assembly extent."""
+    return _val.measure(params)
+
+
+def cmd_find_problems(params):
+    """Validation restricted to what failed, ranked, with a fix hint per item.
+
+    Same engine as ``validate`` but shaped for an agent that wants to act, not
+    for a human reading a report top to bottom.
+    """
+    report = _val.validate(params)
+    fixes = {
+        "scale": "call blender_set_render_settings or fix the scene unit scale",
+        "dimensions": "edit the generator parameters rather than adding geometry",
+        "normals": "blender_geometry operation='recalc_normals'",
+        "topology": "blender_geometry operation='weld' then re-check; "
+                    "delete loose islands",
+        "intersections": "move or shrink one of the reported pairs",
+        "symmetry": "mirror one half onto the other",
+        "naming": "strip the .001 suffix before exporting",
+        "materials": "blender_assign_material",
+        "uv": "blender_uv action='smart_project'",
+        "transforms": "blender_apply_transform",
+        "pivots": "set each origin to geometry first, then parent",
+        "budget": "decimate or drop to a lower LOD",
+        "lods": "add _LOD1/_LOD2 duplicates or a LOD collection",
+        "lighting": "blender_add_light / blender_set_active_camera",
+        "orphans": "bpy.ops.outliner.orphans_purge(do_recursive=True)",
+    }
+    actionable = [c for c in report["checks"] if c["severity"] in ("error", "warn")]
+    for item in actionable:
+        item["fix"] = fixes.get(item["check"], "inspect manually")
+    return {"verdict": report["verdict"], "score": report["score"],
+            "actionable": actionable,
+            "passed": [c["check"] for c in report["checks"] if c["severity"] == "ok"]}
+
+
+def cmd_generate_texture(params):
+    """Procedural texture written to a PNG on disk."""
+    return _tex.generate(params)
+
+
+def cmd_generate_pbr_set(params):
+    """Matched BaseColor/Roughness/Metallic/Normal/AO from one seed, optionally
+    wired straight into a material."""
+    return _tex.generate_pbr_set(params)
+
+
+def cmd_bake_texture(params):
+    """Bake the active material's procedural nodes down to image files."""
+    return _tex.bake(params)
+
+
+def cmd_pack_textures(params):
+    """Pack loose images into the .blend so the file is self-contained."""
+    return _tex.pack_textures(params)
+
+
+def cmd_list_images(params):
+    return _tex.list_images(params)
+
+
+def cmd_set_context(params):
+    return _ops.set_context(params)
+
+
+def cmd_select_by(params):
+    return _ops.select_by(params)
+
+
+def cmd_undo(params):
+    return _ops.undo(params)
+
+
+def cmd_redo(params):
+    return _ops.redo(params)
+
+
+def cmd_checkpoint(params):
+    return _ops.checkpoint(params)
+
+
+def cmd_geometry(params):
+    return _ops.geometry(params)
+
+
+def cmd_modifiers(params):
+    return _ops.modifiers(params)
+
+
+def cmd_uv(params):
+    return _ops.uv(params)
+
+
+def cmd_rig(params):
+    return _ops.rig(params)
+
+
+def cmd_pose(params):
+    return _ops.pose(params)
+
+
+def cmd_physics(params):
+    return _ops.physics(params)
+
+
+def cmd_scene_ops(params):
+    return _ops.scene_ops(params)
+
+
+def cmd_render_extras(params):
+    return _ops.render_extras(params)
+
+
+def cmd_batch(params):
+    """Run many commands in a single round trip.
+
+    Each step is ``{"command": <handler name>, "params": {...}}``. Results are
+    reported per step so one failure does not hide the steps that worked;
+    ``stop_on_error`` (default false) keeps going.
+    """
+    steps = params.get("steps") or params.get("commands")
+    if not isinstance(steps, list) or not steps:
+        raise CommandError("batch needs a 'steps' list of "
+                           "{'command': ..., 'params': {...}} objects")
+    if len(steps) > int(params.get("max_steps", 200)):
+        raise CommandError(f"batch limited to {params.get('max_steps', 200)} steps")
+    stop_on_error = bool(params.get("stop_on_error", False))
+    results = []
+    for index, step in enumerate(steps):
+        if not isinstance(step, dict):
+            results.append({"index": index, "ok": False,
+                            "error": "step must be an object"})
+            continue
+        name = step.get("command") or step.get("name")
+        step_params = step.get("params") or step.get("arguments") or {}
+        if name == "batch":
+            results.append({"index": index, "ok": False,
+                            "error": "batch cannot be nested"})
+            continue
+        handler = HANDLERS.get(str(name))
+        if handler is None:
+            results.append({"index": index, "ok": False, "command": name,
+                            "error": f"unknown command {name!r}"})
+            if stop_on_error:
+                break
+            continue
+        started = time.time()
+        try:
+            data = handler(dict(step_params) if isinstance(step_params, dict) else {})
+            results.append({"index": index, "ok": True, "command": name,
+                            "seconds": round(time.time() - started, 4),
+                            "data": data})
+        except Exception as exc:  # noqa: BLE001
+            results.append({"index": index, "ok": False, "command": name,
+                            "error": f"{type(exc).__name__}: {exc}"})
+            if stop_on_error:
+                break
+    return {"steps": len(steps), "executed": len(results),
+            "failed": sum(1 for r in results if not r["ok"]),
+            "results": results}
+
+
 HANDLERS = {
     "ping": cmd_ping,
     "get_scene": cmd_get_scene,
@@ -2143,4 +2325,33 @@ HANDLERS = {
     "run_operator": cmd_run_operator,
     "search_api": cmd_search_blender_docs,
     "execute": cmd_execute,
+    # --- v2: model validation -------------------------------------------
+    "validate": cmd_validate,
+    "analyze_mesh": cmd_analyze_mesh,
+    "measure": cmd_measure,
+    "find_problems": cmd_find_problems,
+    # --- v2: textures ----------------------------------------------------
+    "generate_texture": cmd_generate_texture,
+    "generate_pbr_set": cmd_generate_pbr_set,
+    "bake_texture": cmd_bake_texture,
+    "pack_textures": cmd_pack_textures,
+    "list_images": cmd_list_images,
+    # --- v2: context, selection, history --------------------------------
+    "set_context": cmd_set_context,
+    "select_by": cmd_select_by,
+    "undo": cmd_undo,
+    "redo": cmd_redo,
+    "checkpoint": cmd_checkpoint,
+    # --- v2: geometry, uv, rig, physics ----------------------------------
+    "geometry": cmd_geometry,
+    "modifiers": cmd_modifiers,
+    "uv": cmd_uv,
+    "rig": cmd_rig,
+    "pose": cmd_pose,
+    "physics": cmd_physics,
+    # --- v2: scene and render --------------------------------------------
+    "scene_ops": cmd_scene_ops,
+    "render_extras": cmd_render_extras,
+    # --- v2: batching ---------------------------------------------------
+    "batch": cmd_batch,
 }

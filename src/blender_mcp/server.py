@@ -20,18 +20,34 @@ from .formatting import failure, respond
 INSTRUCTIONS = """
 Control a running Blender 4.5 LTS instance over its local MCP bridge.
 
-Typical flow:
-1. `blender_setup`   - ONCE, if `blender_status` says not connected. Copies the
-   bundled addon into Blender's user addons folder and enables it. Ask the user
-   to restart Blender afterwards. Skip it entirely if Blender is already
-   connected.
-2. `blender_status`  - confirm the bridge is online, note the open .blend file.
-3. `blender_get_scene` - survey the existing scene before touching it.
-4. Build with `blender_add_primitive` / `blender_create_mesh` /
-   `blender_edit_mesh` / `blender_add_modifier` / `blender_create_material`.
-5. `blender_look_at` + `blender_set_render_settings` + `blender_render`, or
-   `blender_capture_viewport` for a fast visual check.
-6. `blender_save_blend` to persist.
+Start here:
+1. `blender_status`  - confirm the bridge is online, note the open .blend file.
+   If it says not connected, call `blender_setup` ONCE, then ask the user to
+   restart Blender (a --background Blender has no event loop and cannot work).
+2. `blender_get_scene` - survey what already exists before touching it.
+3. `blender_find_problems` - audit the model you are about to work on, or the
+   one you just built. Every finding comes with the tool call that fixes it.
+4. `blender_validate` - the full scored report (scale, dimensions vs a real
+   spec, normals, topology, intersections, symmetry, naming, materials, UVs,
+   transforms, pivots, budget, LODs, lighting, orphans).
+5. Build with `blender_add_primitive` / `blender_create_mesh` /
+   `blender_edit_mesh` / `blender_geometry` / `blender_add_modifier` /
+   `blender_create_material` / `blender_generate_pbr_set`.
+6. `blender_look_at` + `blender_set_render_settings` + `blender_render`, or
+   `blender_capture_viewport` for a fast visual check, or
+   `blender_render_extras` action='clay' for a near-instant preview.
+7. `blender_save_blend` to persist.
+
+Speed:
+- `blender_batch` runs many commands in ONE round trip. Use it to build
+  anything repetitive; a 40-step scene is one call instead of forty.
+- `blender_select_by` finds objects by predicate (loose geometry, no UVs,
+  too large, by material) instead of by name, which is what you want on a
+  scene with hundreds of objects.
+- `blender_set_context` sets active object, selection, collection and mode
+  atomically, so an operator never runs against the wrong selection.
+- `blender_checkpoint` / `blender_undo` / `blender_redo` make experimentation
+  safe.
 
 Escape hatches when no dedicated tool fits:
 - `blender_execute_python` runs arbitrary Python on Blender's main thread
@@ -48,7 +64,7 @@ Coordinates are Z-up, rotation is in degrees.
 mcp = MCPServer(
     name="blender",
     title="Blender 4.5 LTS",
-    version="1.0.0",
+    version="2.0.0",
     instructions=INSTRUCTIONS,
 )
 
@@ -1002,6 +1018,592 @@ def blender_insert_keyframe(
 def blender_animation_info(response_format: FORMAT = "json") -> Any:
     """Report the frame range, all actions, and which objects are animated."""
     return respond(call("animation_info", {}), response_format, title="Animation")
+
+
+# =========================================================================== #
+# v2: model validation
+# =========================================================================== #
+
+
+@mcp.tool(annotations=READ)
+@guard
+def blender_validate(
+    target: Annotated[dict | None, Field(
+        description="Real-world spec to check against, e.g. "
+                    "{'length': 3.765, 'width': 1.490, 'height': 1.370}. "
+                    "Keys: length, width, height (metres).")] = None,
+    objects: Annotated[list[str] | None, Field(
+        description="Restrict the audit to these object names.")] = None,
+    ignore: Annotated[list[str] | None, Field(
+        description="Glob patterns to exclude, e.g. ['Sweep', 'Ground*']. "
+                    "Studio props otherwise dominate every size check.")] = None,
+    checks: Annotated[list[str] | None, Field(
+        description="Run only these checks: scale, dimensions, normals, topology, "
+                    "intersections, symmetry, naming, materials, uv, transforms, "
+                    "pivots, budget, lods, lighting, orphans.")] = None,
+    tolerance_pct: Annotated[float, Field(
+        description="Allowed deviation for the dimension check, in percent.")] = 2.0,
+    max_faces: Annotated[int, Field(
+        description="Face budget above which the budget check warns.")] = 500_000,
+    weld_distance: Annotated[float, Field(
+        description="Weld distance used when reporting duplicate vertices.")] = 1e-5,
+    max_pivot_offset: Annotated[float, Field(
+        description="Distance from geometry centre above which a pivot is reported.")] = 0.05,
+    orphans: bool = True,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Audit the model and return a scored report: scale, dimensions, normals,
+    topology, intersections, symmetry, naming, materials, UVs, transforms,
+    pivots, poly budget, LODs, lighting and orphan datablocks.
+
+    This is the first tool to reach for after building something, and again
+    before exporting. Pass `target` to check real-world proportions against a
+    known vehicle or asset spec.
+
+    Each check reports `ok`, `info`, `warn` or `error`; a check that itself
+    crashes is reported as an `error` entry rather than aborting the audit, so
+    you always get a full picture.
+    """
+    return respond(call("validate", {
+        "target": target, "objects": objects, "ignore": ignore, "checks": checks,
+        "tolerance_pct": tolerance_pct, "max_faces": max_faces,
+        "weld_distance": weld_distance, "max_distance": max_pivot_offset,
+        "orphans": orphans,
+    }), response_format, title="Model validation")
+
+
+@mcp.tool(annotations=READ)
+@guard
+def blender_find_problems(
+    target: Annotated[dict | None, Field(
+        description="Real-world spec, same shape as blender_validate.")] = None,
+    objects: Annotated[list[str] | None, Field(description="Object names.")] = None,
+    ignore: Annotated[list[str] | None, Field(description="Glob patterns to exclude.")] = None,
+    max_faces: int = 500_000,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Like `blender_validate`, but only the failures, each with a concrete fix.
+
+    Use this when you want to act rather than read: it returns an `actionable`
+    list where every entry pairs a problem with the tool call that resolves it.
+    """
+    return respond(call("find_problems", {
+        "target": target, "objects": objects, "ignore": ignore, "max_faces": max_faces,
+    }), response_format, title="Actionable problems")
+
+
+@mcp.tool(annotations=READ)
+@guard
+def blender_analyze_mesh(
+    object: Annotated[str, Field(description="Name of the mesh object to analyse.")],
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Deep statistics for one mesh.
+
+    Beyond face counts: manifold/boundary/wire edge census, whether the shell is
+    closed, signed volume, surface area, min/max/zero-area faces, loose verts and
+    edges, duplicate vertices within 1e-5, UV layers, vertex groups, shape keys
+    and the modifier stack. Use it to decide between fixing a mesh and
+    regenerating it.
+    """
+    return respond(call("analyze_mesh", {"object": object}),
+                   response_format, title="Mesh analysis")
+
+
+@mcp.tool(annotations=READ)
+@guard
+def blender_measure(
+    mode: Annotated[Literal["bbox", "objects", "assembly"], Field(
+        description="'bbox' of one object, 'objects' centre-to-centre distance, "
+                    "'assembly' extent of the whole scene.")] = "bbox",
+    object: Annotated[str, Field(description="Object name for mode='bbox'.")] = "",
+    a: Annotated[str, Field(description="First object for mode='objects'.")] = "",
+    b: Annotated[str, Field(description="Second object for mode='objects'.")] = "",
+    objects: Annotated[list[str] | None, Field(description="Restrict mode='assembly'.")] = None,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Measure real-world distances that are tedious to eyeball: a bounding box,
+    the distance between two object centres, or the extent of a whole assembly.
+    """
+    return respond(call("measure", {
+        "mode": mode, "object": object, "a": a, "b": b, "objects": objects,
+    }), response_format, title="Measurements")
+
+
+# =========================================================================== #
+# v2: textures
+# =========================================================================== #
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_generate_texture(
+    pattern: Annotated[str, Field(
+        description="One of: solid, noise, fbm, voronoi, checker, grid, stripes, "
+                    "gradient, radial, brushed_metal, rust, scratches, grunge, "
+                    "concrete, asphalt, wood, leather, carbon, hazard, plate.")],
+    size: Annotated[int, Field(description="Square resolution, 8..4096.")] = 1024,
+    seed: int = 0,
+    scale: Annotated[float, Field(description="Feature count across the image.")] = 8.0,
+    octaves: Annotated[int, Field(description="Detail layers for fbm-style patterns.")] = 6,
+    contrast: Annotated[float, Field(description="1.0 neutral, higher is punchier.")] = 1.0,
+    text: Annotated[str, Field(
+        description="Characters to stamp, used by pattern='plate'.")] = "",
+    also_normal: Annotated[bool, Field(
+        description="Also write a derived normal map.")] = False,
+    normal_strength: Annotated[float, Field(description="Normal map strength.")] = 2.0,
+    name: Annotated[str, Field(description="Image datablock name and file stem.")] = "",
+    output_path: Annotated[str, Field(
+        description="Explicit PNG path; overrides output_dir.")] = "",
+    output_dir: Annotated[str, Field(
+        description="Directory for the PNG. Defaults to ~/BlenderMCP_Textures.")] = "",
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Generate a procedural texture and write it to a real PNG on disk.
+
+    Useful for plate text, hazard stripes, carbon weave, rust, brushed metal,
+    leather grain and similar. The file is a normal image you can inspect,
+    pack and ship - not a viewport-only effect.
+    """
+    return respond(call("generate_texture", {
+        "pattern": pattern, "size": size, "seed": seed, "scale": scale,
+        "octaves": octaves, "contrast": contrast, "text": text,
+        "also_normal": also_normal, "normal_strength": normal_strength,
+        "name": name, "output_path": output_path, "output_dir": output_dir,
+    }), response_format, title="Texture generated")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_generate_pbr_set(
+    pattern: str = "fbm",
+    size: int = 1024,
+    seed: int = 0,
+    scale: float = 8.0,
+    octaves: int = 6,
+    contrast: float = 1.0,
+    color: Annotated[str, Field(description="Shadow colour as #rrggbb.")] = "#808080",
+    color2: Annotated[str, Field(description="Highlight colour as #rrggbb.")] = "#ffffff",
+    metallic: float = 0.0,
+    roughness_min: float = 0.25,
+    roughness_max: float = 0.85,
+    normal_strength: float = 2.0,
+    name: Annotated[str, Field(description="File stem for the set.")] = "",
+    material: Annotated[str, Field(
+        description="Existing material to wire the set into. Optional; when given, "
+                    "the maps are connected to its Principled BSDF.")] = "",
+    output_dir: Annotated[str, Field(description="Output directory.")] = "",
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Generate a matched BaseColor / Roughness / Metallic / Normal / AO set.
+
+    All five maps come from one height field and one seed, which is what makes
+    them read as a single material. BaseColor is written sRGB, the data maps
+    Non-Color. Pass `material` to connect everything to a Principled BSDF in
+    one step, including an AO multiply onto Base Color.
+    """
+    return respond(call("generate_pbr_set", {
+        "pattern": pattern, "size": size, "seed": seed, "scale": scale,
+        "octaves": octaves, "contrast": contrast, "color": color, "color2": color2,
+        "metallic": metallic, "roughness_min": roughness_min,
+        "roughness_max": roughness_max, "normal_strength": normal_strength,
+        "name": name, "material": material, "output_dir": output_dir,
+    }), response_format, title="PBR set generated")
+
+
+@mcp.tool(annotations=SLOW)
+@guard
+def blender_bake_texture(
+    object: Annotated[str, Field(description="Mesh with the material to bake.")] = "",
+    target: Annotated[Literal["DIFFUSE", "NORMAL", "ROUGHNESS", "METALLIC", "AO",
+                               "SHADOW", "EMIT", "ENVIRONMENT", "DIRECT", "AO_PASS"],
+                        Field(description="Bake pass to render.")] = "DIFFUSE",
+    size: int = 1024,
+    output_dir: Annotated[str, Field(description="Output directory.")] = "",
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Bake a material's procedural node setup down to image files on disk.
+
+    Needs UVs and a node-based material. Cycles is the reliable bake engine; if
+    the bake fails the result says so and why instead of raising.
+    """
+    return respond(call("bake_texture", {
+        "object": object, "target": target, "size": size, "output_dir": output_dir,
+    }), response_format, title="Texture baked")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_pack_textures(repack: bool = False, response_format: FORMAT = "markdown") -> Any:
+    """Pack every loose image into the .blend so the file is self-contained.
+
+    Do this before handing a .blend to someone else or committing it.
+    """
+    return respond(call("pack_textures", {"repack": repack}),
+                   response_format, title="Textures packed")
+
+
+@mcp.tool(annotations=READ)
+@guard
+def blender_list_images(limit: int = 100, response_format: FORMAT = "markdown") -> Any:
+    """List every image datablock with size, source, colour space and packed state."""
+    return respond(call("list_images", {"limit": limit}),
+                   response_format, title="Images")
+
+
+# =========================================================================== #
+# v2: context, selection, history
+# =========================================================================== #
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_set_context(
+    active: Annotated[str, Field(description="Object to make active.")] = "",
+    select: Annotated[list[str] | None, Field(description="Objects to select.")] = None,
+    collection: Annotated[str, Field(
+        description="Collection to make the active layer collection.")] = "",
+    mode: Annotated[Literal["OBJECT", "EDIT", "POSE", "SCULPT"], Field(
+        description="Mode to switch to once the active object is set.")] = "",
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Set mode, active object, active collection and selection atomically.
+
+    Most operator calls need all four set correctly. Doing it in one round trip
+    avoids leaving Blender in a half-applied state when one step fails.
+    """
+    return respond(call("set_context", {
+        "active": active, "select": select, "collection": collection, "mode": mode,
+    }), response_format, title="Context set")
+
+
+@mcp.tool(annotations=READ)
+@guard
+def blender_select_by(
+    by: Annotated[Literal["name", "type", "material", "collection", "size", "loose",
+                          "no_material", "no_uv", "empty_parent"], Field(
+        description="Predicate to select by.")],
+    pattern: Annotated[str, Field(description="Glob pattern for by='name'.")] = "*",
+    object_type: Annotated[str, Field(description="For by='type', e.g. MESH.")] = "MESH",
+    material: Annotated[str, Field(description="For by='material'.")] = "",
+    collection: Annotated[str, Field(description="For by='collection'.")] = "",
+    min_dimension: Annotated[float, Field(
+        description="For by='size', smallest accepted dimension in metres.")] = 1.0,
+    axis: Annotated[int, Field(
+        description="For by='size': -1 for the largest dimension, 0/1/2 for one axis.")] = -1,
+    limit: int = 500,
+    make_active: bool = True,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Select objects by a predicate rather than by name.
+
+    Names are what agents get wrong on a large scene. This finds every mesh with
+    loose geometry, without a material, without UVs, larger than N metres,
+    belonging to a collection, or matching a glob.
+    """
+    return respond(call("select_by", {
+        "by": by, "pattern": pattern, "object_type": object_type,
+        "material": material, "collection": collection,
+        "min_dimension": min_dimension, "axis": axis, "limit": limit,
+        "make_active": make_active,
+    }), response_format, title="Selection by predicate")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_undo(response_format: FORMAT = "markdown") -> Any:
+    """Undo the last change pushed onto Blender's undo stack.
+
+    Pair it with `blender_checkpoint` to make a step reversible. Refuses to
+    rewind across an Open File, because Blender's undo stack does not survive
+    one and attempting it crashes Blender rather than raising.
+    """
+    return respond(call("undo", {}), response_format, title="Undo")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_redo(response_format: FORMAT = "markdown") -> Any:
+    """Redo the last undone change, restoring the scene to the state it had
+    before the matching `blender_undo` call."""
+    return respond(call("redo", {}), response_format, title="Redo")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_checkpoint(
+    label: Annotated[str, Field(description="Name shown in Blender's undo history.")] = "mcp checkpoint",
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Push a named marker onto the undo stack so a later `blender_undo` returns here."""
+    return respond(call("checkpoint", {"label": label}),
+                   response_format, title="Checkpoint")
+
+
+# =========================================================================== #
+# v2: geometry, modifiers, UV, rig, physics
+# =========================================================================== #
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_geometry(
+    operation: Annotated[Literal["mirror", "array", "solidify", "screw", "spin",
+                                   "weld", "recalc_normals", "flip_normals",
+                                   "triangulate", "decimate", "remesh", "wireframe",
+                                   "shrink_fatten", "bevel_all"], Field(
+        description="Geometry operation to apply.")],
+    objects: Annotated[list[str] | None, Field(description="Target meshes.")] = None,
+    axis: Annotated[Literal["X", "Y", "Z"], Field(description="For mirror/spin.")] = "X",
+    count: Annotated[int, Field(description="For array.")] = 3,
+    offset: Annotated[list[float], Field(description="For array, constant offset.")] = [1.0, 0.0, 0.0],
+    thickness: float = 0.02,
+    steps: Annotated[int, Field(description="For screw/spin.")] = 12,
+    angle: Annotated[float, Field(description="For screw/spin, radians.")] = 3.141592653589793,
+    radius: float = 0.5,
+    distance: Annotated[float, Field(description="For weld.")] = 0.0001,
+    ratio: Annotated[float, Field(description="For decimate, 0..1.")] = 0.5,
+    mode: Annotated[str, Field(description="For remesh: VOXEL, BLOCKS, SMOOTH, SHARP.")] = "VOXEL",
+    voxel_size: float = 0.05,
+    segments: int = 2,
+    width: float = 0.005,
+    value: float = 0.0,
+    bisect: bool = False,
+    clip: bool = True,
+    merge: bool = True,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Geometry operations that do not fit the generic modifier tool.
+
+    Covers mirror, array, solidify, screw, spin, weld, normal fixes,
+    triangulation, decimation, remeshing, wireframe, shrink/fatten and a
+    batch bevel. Edit-mode operations restore object mode automatically, even
+    if the operator raises.
+    """
+    return respond(call("geometry", {
+        "operation": operation, "objects": objects, "axis": axis, "count": count,
+        "offset": offset, "thickness": thickness, "steps": steps, "angle": angle,
+        "radius": radius, "distance": distance, "ratio": ratio, "mode": mode,
+        "voxel_size": voxel_size, "segments": segments, "width": width,
+        "value": value, "bisect": bisect, "clip": clip, "merge": merge,
+    }), response_format, title=f"Geometry: {operation}")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_modifiers(
+    action: Annotated[Literal["list", "mute", "remove", "move", "apply"], Field(
+        description="What to do with modifiers.")],
+    objects: Annotated[list[str] | None, Field(description="Target objects.")] = None,
+    modifier: Annotated[str, Field(
+        description="Modifier name, or 'all' for remove/apply.")] = "",
+    index: Annotated[int, Field(description="Target position for action='move'.")] = 0,
+    value: Annotated[bool, Field(description="New state for action='mute'.")] = True,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Inspect, mute, reorder, remove or apply modifiers across objects.
+
+    Modifier order changes results, and `list` shows the real evaluated stack
+    rather than guessing from the UI.
+    """
+    return respond(call("modifiers", {
+        "action": action, "objects": objects, "modifier": modifier,
+        "index": index, "value": value,
+    }), response_format, title=f"Modifiers: {action}")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_uv(
+    action: Annotated[Literal["report", "smart_project", "unwrap", "pack_islands",
+                              "remove_doubles", "scale", "center"], Field(
+        description="UV operation.")],
+    objects: Annotated[list[str] | None, Field(description="Target meshes.")] = None,
+    angle_limit_deg: float = 66.0,
+    margin: float = 0.002,
+    scale_to_bounds: bool = False,
+    method: Annotated[str, Field(description="For unwrap: ANGLE_BASED or CONFORMAL.")] = "ANGLE_BASED",
+    distance: float = 0.0001,
+    x: float = 1.0,
+    y: float = 1.0,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Unwrapping and UV maintenance: report, smart project, unwrap, pack
+    islands, weld, scale and centre. A UV layer is created if missing."""
+    return respond(call("uv", {
+        "action": action, "objects": objects, "angle_limit_deg": angle_limit_deg,
+        "margin": margin, "scale_to_bounds": scale_to_bounds, "method": method,
+        "distance": distance, "x": x, "y": y,
+    }), response_format, title=f"UV: {action}")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_rig(
+    action: Annotated[Literal["create_armature", "add_bone", "skin", "clear"], Field(
+        description="Rigging operation.")],
+    name: Annotated[str, Field(description="Armature name.")] = "Rig",
+    bone: Annotated[str, Field(description="Bone name for add_bone.")] = "Bone",
+    head: Annotated[list[float], Field(description="Bone head position.")] = [0.0, 0.0, 0.0],
+    tail: Annotated[list[float], Field(description="Bone tail position.")] = [0.0, 0.0, 0.1],
+    parent: Annotated[str, Field(description="Parent bone name.")] = "",
+    object: Annotated[str, Field(description="Mesh to skin, or delete its groups for clear.")] = "",
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Create an armature, add bones, and bind meshes with automatic weights.
+
+    Also the escape hatch for crash setups: skin the body panels, then simulate.
+    """
+    return respond(call("rig", {
+        "action": action, "name": name, "bone": bone, "head": head, "tail": tail,
+        "parent": parent, "object": object,
+    }), response_format, title=f"Rig: {action}")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_pose(
+    armature: str,
+    bone: str,
+    location: Annotated[list[float] | None, Field(description="Local bone offset.")] = None,
+    rotation_degrees: Annotated[list[float] | None, Field(
+        description="Euler rotation in degrees.")] = None,
+    scale: Annotated[list[float] | None, Field(description="Bone scale.")] = None,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Set a pose bone's location, rotation and scale. Useful for posing before
+    a physics bake or for checking a rig's range of motion."""
+    return respond(call("pose", {
+        "armature": armature, "bone": bone, "location": location,
+        "rotation_degrees": rotation_degrees, "scale": scale,
+    }), response_format, title="Pose")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_physics(
+    action: Annotated[Literal["rigid_body", "passive", "bake", "cloth", "collision",
+                               "soft_body", "force_field"], Field(
+        description="Physics operation.")],
+    objects: Annotated[list[str] | None, Field(description="Target meshes.")] = None,
+    type: Annotated[str, Field(
+        description="'ACTIVE'/'PASSIVE' for rigid_body, or a force field type "
+                    "such as FORCE, WIND, VORTEX, TURBULENCE.")] = "ACTIVE",
+    mass: Annotated[float | None, Field(description="Rigid body mass.")] = None,
+    collision_shape: Annotated[str, Field(
+        description="BOX, SPHERE, CAPSULE, CYLINDER, CONVEX_HULL, MESH, COMPOUND.")] = "",
+    frames: Annotated[int, Field(description="Frames to bake.")] = 60,
+    time_scale: float = 1.0,
+    substeps: int = 10,
+    solver_iterations: int = 10,
+    quality: int = 5,
+    preset: Annotated[str, Field(
+        description="Cloth preset, e.g. COTTON, DENIM, LEATHER, or a number of "
+                    "collision quality steps.")] = "",
+    name: Annotated[str, Field(description="Force field object name.")] = "Field",
+    location: Annotated[list[float], Field(description="Force field position.")] = [0.0, 0.0, 1.0],
+    strength: Annotated[float | None, Field(description="Force field strength.")] = None,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Rigid bodies, cloth, soft bodies, collision and force fields.
+
+    Set up separate panels as independent rigid bodies, add collision to the
+    chassis, bake, and inspect. Rigid body constraints go through
+    `blender_run_operator` with `bpy.ops.rigidbody.constraint_add`.
+    """
+    return respond(call("physics", {
+        "action": action, "objects": objects, "type": type, "mass": mass,
+        "collision_shape": collision_shape, "frames": frames,
+        "time_scale": time_scale, "substeps": substeps,
+        "solver_iterations": solver_iterations, "quality": quality, "preset": preset,
+        "name": name, "location": location, "strength": strength,
+    }), response_format, title=f"Physics: {action}")
+
+
+# =========================================================================== #
+# v2: scene + render extras
+# =========================================================================== #
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_scene_ops(
+    action: Annotated[Literal["duplicate_hierarchy", "instance_collection",
+                               "apply_instances", "purge_orphans", "depsgraph",
+                               "addons", "memory"], Field(
+        description="Scene operation.")],
+    object: Annotated[str, Field(description="Root object for duplicate_hierarchy.")] = "",
+    new_name: Annotated[str, Field(description="Name for the duplicate root.")] = "",
+    collection: Annotated[str, Field(description="Collection to instance.")] = "",
+    location: Annotated[list[float], Field(description="Instance position.")] = [0.0, 0.0, 0.0],
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Hierarchy and housekeeping: duplicate a parent with all children, instance
+    or realise collections, purge orphans, and inspect the depsgraph, enabled
+    add-ons or datablock counts."""
+    return respond(call("scene_ops", {
+        "action": action, "object": object, "new_name": new_name,
+        "collection": collection, "location": location,
+    }), response_format, title=f"Scene: {action}")
+
+
+@mcp.tool(annotations=SLOW)
+@guard
+def blender_render_extras(
+    action: Annotated[Literal["turntable", "clay", "passes", "contact_sheet"], Field(
+        description="Render helper.")],
+    frames: Annotated[int, Field(description="Turntable frame count.")] = 8,
+    resolution: int = 960,
+    pivot: Annotated[list[float], Field(description="Turntable pivot.")] = [0.0, 0.0, 0.0],
+    passes: Annotated[list[str], Field(
+        description="Render passes to enable: Z, NORMAL, AO, MIST, COMBINED.")] = ["Z", "NORMAL"],
+    images: Annotated[list[str] | None, Field(
+        description="Image paths for action='contact_sheet'.")] = None,
+    columns: int = 3,
+    cell: int = 420,
+    output: Annotated[str, Field(description="Output path for contact_sheet.")] = "",
+    output_dir: Annotated[str, Field(description="Output directory.")] = "",
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Turntable renders, a fast clay preview, render pass toggles, and contact
+    sheets assembled from existing images. The clay preview uses Workbench, so
+    it is near-instant even on a heavy scene."""
+    return respond(call("render_extras", {
+        "action": action, "frames": frames, "resolution": resolution, "pivot": pivot,
+        "passes": passes, "images": images, "columns": columns, "cell": cell,
+        "output": output, "output_dir": output_dir,
+    }), response_format, title=f"Render: {action}")
+
+
+# =========================================================================== #
+# v2: batching
+# =========================================================================== #
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_batch(
+    steps: Annotated[list[dict], Field(
+        description="Ordered steps, each {'command': <name>, 'params': {...}}. "
+                    "Uses addon command names, e.g. 'add_primitive', 'set_transform', "
+                    "'validate'.")],
+    stop_on_error: Annotated[bool, Field(
+        description="Abort at the first failure instead of continuing.")] = False,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Run many bridge commands in a single round trip.
+
+    Each step is `{"command": <addon command>, "params": {...}}`. Results come
+    back per step, so one failure does not hide the steps that worked. This is
+    the fastest way to build a scene, because it collapses dozens of round trips
+    into one.
+
+    Command names are the addon's, not the tool names: `add_primitive`,
+    `create_mesh`, `set_transform`, `assign_material`, `add_modifier`,
+    `validate`, `geometry`, and so on.
+    """
+    return respond(call("batch", {"steps": steps, "stop_on_error": stop_on_error}),
+                   response_format, title="Batch")
 
 
 def main() -> None:  # pragma: no cover

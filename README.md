@@ -16,17 +16,43 @@ renders handed back to the model as images it can look at.
 
 Point any MCP client at it and the agent can:
 
+- **Audit** the model before and after it works: `blender_validate` returns a
+  scored report across scale, real-world dimensions, normals, topology,
+  intersections, symmetry, naming, materials, UVs, transforms, pivots, poly
+  budget, LODs, lighting and orphan datablocks. `blender_find_problems` returns
+  only the failures, each paired with the tool call that fixes it.
+- **Measure** instead of guessing: bounding boxes, centre distances, assembly
+  extents, and a full per-mesh census (manifold/boundary/wire edges, closed
+  shell, signed volume, loose and duplicate geometry).
 - **Survey** your open scene: objects, collections, materials, meshes, render settings
-- **Model**: primitives, custom meshes, and ~30 bmesh operators (extrude, bevel,
-  inset, subdivide, bridge, spin, merge, recalc normals) on selection or whole mesh
+- **Model**: primitives, custom meshes, ~30 bmesh operators (extrude, bevel,
+  inset, subdivide, bridge, spin, merge, recalc normals), plus mirror, array,
+  screw, weld, remesh, decimate and wireframe
 - **Shade** with 30 non-destructive modifiers, applied or left live
-- **Material** with Principled BSDF and procedural textures (noise, voronoi,
-  wave, checker, brick, gradient) or loaded HDRIs
+- **Unwrap** with smart project, angle/conformal unwrap, island packing and
+  welding, and report UV ranges before they become an atlas problem
+- **Generate textures** procedurally as real PNG files: 20 patterns from fbm and
+  voronoi to rust, brushed metal, leather, carbon weave and stencilled
+  registration plates, plus matched BaseColor/Roughness/Metallic/Normal/AO sets
+  that can be wired straight into a material. Bake procedural nodes to disk and
+  pack everything into the .blend.
+- **Rig and simulate**: armatures, bones, automatic weights, pose bones, rigid
+  bodies, cloth, soft bodies, collision and force fields
 - **Light and frame**: sun/area/spot lights, three-point setups, world gradients,
   physical Nishita sky, HDRI, cameras that aim themselves
 - **See its own work**: `blender_capture_viewport` and `blender_render` return
-  the image as an MCP content block, so the agent reviews the render and iterates
+  the image as an MCP content block, so the agent reviews the render and iterates.
+  `blender_render_extras` adds turntables, a near-instant Workbench clay preview,
+  render passes and contact sheets
 - **Round-trip** `.blend`, `.glb`, `.gltf`, `.fbx`, `.obj`, `.stl`, `.ply`, `.usd`, `.abc`
+
+Two things that matter on a big scene:
+
+- **`blender_batch`** runs many commands in a single round trip, with per-step
+  results. A forty-step build is one call instead of forty.
+- **`blender_select_by`** finds objects by predicate - loose geometry, missing
+  UVs, missing materials, too large, by collection, by glob - because names are
+  what an agent gets wrong first.
 
 Plus three escape hatches for everything else:
 `blender_execute_python`, `blender_run_operator`, and
@@ -34,7 +60,7 @@ Plus three escape hatches for everything else:
 operator ids and property names of the Blender build it is talking to, instead of
 relying on the model's memory.
 
-**46 tools.** See [Tools](#tools).
+**69 tools.** See [Tools](#tools).
 
 ## Install
 
@@ -163,6 +189,13 @@ Consequences worth knowing:
 | Group | Tools |
 |---|---|
 | Setup & status | `blender_setup`, `blender_status` |
+| **Validation** | `blender_validate`, `blender_find_problems`, `blender_analyze_mesh`, `blender_measure` |
+| **Textures** | `blender_generate_texture`, `blender_generate_pbr_set`, `blender_bake_texture`, `blender_pack_textures`, `blender_list_images` |
+| **Context & history** | `blender_set_context`, `blender_select_by`, `blender_checkpoint`, `blender_undo`, `blender_redo` |
+| **Geometry & UV** | `blender_geometry`, `blender_modifiers`, `blender_uv` |
+| **Rig & physics** | `blender_rig`, `blender_pose`, `blender_physics` |
+| **Scene & render** | `blender_scene_ops`, `blender_render_extras` |
+| **Batching** | `blender_batch` |
 | Scene | `blender_get_scene`, `blender_execute_python`, `blender_list_operators`, `blender_run_operator`, `blender_search_api` |
 | Objects | `blender_list_objects`, `blender_get_object`, `blender_add_primitive`, `blender_create_mesh`, `blender_duplicate_objects`, `blender_delete_objects`, `blender_rename_object`, `blender_set_transform`, `blender_apply_transform`, `blender_select_objects`, `blender_join_objects`, `blender_parent_objects`, `blender_shade_smooth` |
 | Mesh & modifiers | `blender_edit_mesh`, `blender_add_modifier`, `blender_apply_modifier` |
@@ -209,10 +242,10 @@ Practical measures:
 ```bash
 python -m venv .venv && .venv/Scripts/python -m pip install -e ".[dev]"
 
-# 55 checks against a real Blender: geometry, bmesh, materials, render, export
+# 87 checks against a real Blender: geometry, bmesh, materials, render, export,
 .venv/Scripts/python scripts/selftest.py
 
-# 22 checks of the MCP protocol through a real stdio client
+#   plus validation, textures, context, geometry, UV, batching and undo safety
 .venv/Scripts/python scripts/mcp_test.py
 ```
 

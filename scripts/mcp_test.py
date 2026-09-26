@@ -64,11 +64,24 @@ async def main() -> int:
             tools = (await session.list_tools()).tools
             names = sorted(t.name for t in tools)
             print(f"1. protocol\n  {len(names)} tools registered")
-            check("tools registered", len(names) >= 45, f"{len(names)} tools")
+            check("tools registered", len(names) >= 65, f"{len(names)} tools")
             check("all prefixed with blender_",
                   all(n.startswith("blender_") for n in names))
             check("setup tool present", "blender_setup" in names,
                   "addon installer is exposed")
+            v2 = {"blender_validate", "blender_find_problems", "blender_analyze_mesh",
+                  "blender_measure", "blender_generate_texture",
+                  "blender_generate_pbr_set", "blender_bake_texture",
+                  "blender_pack_textures", "blender_list_images",
+                  "blender_set_context", "blender_select_by", "blender_undo",
+                  "blender_redo", "blender_checkpoint", "blender_geometry",
+                  "blender_modifiers", "blender_uv", "blender_rig", "blender_pose",
+                  "blender_physics", "blender_scene_ops", "blender_render_extras",
+                  "blender_batch"}
+            missing_v2 = sorted(v2 - set(names))
+            check("v2 tools present", not missing_v2,
+                  "missing: " + ", ".join(missing_v2) if missing_v2
+                  else f"all {len(v2)} present")
             check("server instructions present",
                   bool((await session.list_tools()) and True))
             check("tool descriptions documented",

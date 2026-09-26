@@ -1,4 +1,4 @@
-﻿"""End-to-end self test: launches Blender with the bridge and exercises every area.
+"""End-to-end self test: launches Blender with the bridge and exercises every area.
 
 Usage:  python scripts/selftest.py [--keep] [--no-headless]
 """
@@ -37,6 +37,13 @@ def assert_true(condition, message):
     if not condition:
         raise AssertionError(message)
     return message
+
+
+def _raise_batch(report):
+    """Turn a failed batch into a readable assertion instead of a bare False."""
+    bad = [f"{r.get('command')}: {r.get('error')}" for r in report["results"]
+           if not r["ok"]]
+    raise AssertionError("batch steps failed -> " + " | ".join(bad)[:300])
 
 
 def _expect_error(function, *args, needle: str) -> str:
@@ -287,9 +294,142 @@ def main() -> int:
     check("animation info", lambda: assert_true(
         BRIDGE.call("animation_info")["animated_objects"], "animation reported"))
 
-    if not args.keep:
-        BRIDGE.call("delete_objects", {"objects": ["FromScript"]})
-        BRIDGE.shutdown()
+    print("\n9. model validation")
+    check("validate runs a full audit", lambda: assert_true(
+        set(BRIDGE.call("validate", {"max_faces": 500000}, timeout=180)) >= {
+            "verdict", "score", "checks"}, "audit returned"))
+    check("validate scores every check", lambda: assert_true(
+        {c["check"] for c in BRIDGE.call(
+            "validate", {"checks": ["scale", "topology", "budget"]},
+            timeout=180)["checks"]} >= {"scale", "topology", "budget"},
+        "requested checks present"))
+    check("validate compares against a spec", lambda: assert_true(
+        "dimensions" in {c["check"] for c in BRIDGE.call(
+            "validate", {"target": {"length": 4.0, "width": 2.0, "height": 1.5}},
+            timeout=180)["checks"]}, "dimension check present"))
+    check("validate ignores named helpers", lambda: assert_true(
+        BRIDGE.call("validate", {"ignore": ["Cube", "Cube.*"]},
+                    timeout=180)["objects_checked"] >= 0,
+        "ignore list accepted"))
+    check("validate explains an over-broad ignore", lambda: _expect_error(
+        BRIDGE.call, "validate", {"ignore": ["*"]},
+        needle="no mesh objects in the scene to validate"))
+    check("find_problems pairs each issue with a fix", lambda: assert_true(
+        all("fix" in item for item in
+            BRIDGE.call("find_problems", {"max_faces": 500000}, timeout=180)["actionable"]),
+        "every actionable item has a fix"))
+    check("analyze_mesh reports a shell census", lambda: assert_true(
+        {"manifold_edges", "boundary_edges", "wire_edges", "loose_vertices"}
+        <= set(BRIDGE.call("analyze_mesh", {"object": "Cube"},
+                           timeout=120)), "census returned"))
+    check("measure reports the assembly extent", lambda: assert_true(
+        len(BRIDGE.call("measure", {"mode": "assembly"}, timeout=120)
+            ["length_width_height"]) == 3, "extent returned"))
+    check("measure catches a bad mode", lambda: _expect_error(
+        BRIDGE.call, "measure", {"mode": "nonsense"}, needle="unknown measure mode"))
+
+    print("\n10. context, selection, history")
+    check("select_by finds meshes", lambda: assert_true(
+        BRIDGE.call("select_by", {"by": "type", "object_type": "MESH"},
+                    timeout=120)["matched"] >= 1, "meshes selected"))
+    check("select_by finds missing UVs", lambda: assert_true(
+        "matched" in BRIDGE.call("select_by", {"by": "no_uv"}, timeout=120),
+        "predicate ran"))
+    check("select_by rejects a bad predicate", lambda: _expect_error(
+        BRIDGE.call, "select_by", {"by": "wat"}, needle="unknown selection mode"))
+    check("set_context switches to edit mode", lambda: assert_true(
+        BRIDGE.call("set_context", {"active": "Cube", "select": ["Cube"],
+                                    "mode": "EDIT"}, timeout=120)["mode_now"]
+        .startswith("EDIT"), "edit mode active"))
+    check("set_context restores object mode", lambda: assert_true(
+        BRIDGE.call("set_context", {"mode": "OBJECT"}, timeout=120)["mode_now"]
+        == "OBJECT", "object mode"))
+    check("checkpoint then undo", lambda: assert_true(
+        BRIDGE.call("checkpoint", {"label": "selftest"}, timeout=120)["checkpoint"]
+        and BRIDGE.call("undo", timeout=120)["undone"], "undo stack works"))
+
+    print("\n11. geometry, modifiers, uv")
+    BRIDGE.call("add_primitive", {"type": "cube", "name": "GeoTarget"})
+    check("geometry adds a mirror modifier", lambda: assert_true(
+        BRIDGE.call("geometry", {"operation": "mirror", "objects": ["GeoTarget"]},
+                    timeout=120)["operation"] == "mirror"
+        and any(m["type"] == "MIRROR" for m in BRIDGE.call(
+            "modifiers", {"action": "list", "objects": ["GeoTarget"]},
+            timeout=120)["results"][0]["modifiers"]), "mirror present"))
+    check("modifiers lists the stack", lambda: assert_true(
+        "modifiers" in BRIDGE.call("modifiers", {"action": "list",
+                                                 "objects": ["GeoTarget"]},
+                                   timeout=120)["results"][0], "stack listed"))
+    check("modifiers removes all", lambda: assert_true(
+        BRIDGE.call("modifiers", {"action": "remove", "modifier": "all",
+                                  "objects": ["GeoTarget"]}, timeout=120)["action"]
+        == "remove", "removed"))
+    check("uv report", lambda: assert_true(
+        "meshes" in BRIDGE.call("uv", {"action": "report", "objects": ["GeoTarget"]},
+                                timeout=120), "uv report returned"))
+    check("geometry rejects an unknown op", lambda: _expect_error(
+        BRIDGE.call, "geometry", {"operation": "teleport"}, needle="unknown geometry operation"))
+
+    print("\n12. textures")
+    tmp = Path(os.environ.get("TEMP", "/tmp")) / "blender_mcp_selftest_tex"
+    tmp.mkdir(parents=True, exist_ok=True)
+    check("generate_texture writes a png", lambda: assert_true(
+        Path(BRIDGE.call("generate_texture", {
+            "pattern": "fbm", "size": 64, "seed": 1, "also_normal": True,
+            "output_dir": str(tmp)}, timeout=180)["files"][0]).is_file(),
+        "base colour written"))
+    check("generate_texture supports plate text", lambda: assert_true(
+        Path(BRIDGE.call("generate_texture", {
+            "pattern": "plate", "size": 128, "seed": 2, "text": "AA 123",
+            "output_dir": str(tmp)}, timeout=180)["files"][0]).is_file(),
+        "plate written"))
+    check("generate_pbr_set writes five maps", lambda: assert_true(
+        len(BRIDGE.call("generate_pbr_set", {
+            "pattern": "concrete", "size": 64, "seed": 3, "name": "st",
+            "output_dir": str(tmp)}, timeout=180)["files"]) == 5, "5 maps"))
+    check("list_images sees the new images", lambda: assert_true(
+        BRIDGE.call("list_images", {"limit": 200}, timeout=120)["count"] > 0,
+        "images listed"))
+    check("pack_textures packs", lambda: assert_true(
+        "packed" in BRIDGE.call("pack_textures", {}, timeout=180), "packed count"))
+    check("generate_texture rejects a huge size", lambda: _expect_error(
+        BRIDGE.call, "generate_texture", {"pattern": "fbm", "size": 99999},
+        needle="size must be between"))
+
+    print("\n13. scene ops and batching")
+    check("scene_ops memory", lambda: assert_true(
+        "objects" in BRIDGE.call("scene_ops", {"action": "memory"},
+                                 timeout=120), "counts returned"))
+    check("scene_ops addons list", lambda: assert_true(
+        "enabled" in BRIDGE.call("scene_ops", {"action": "addons"},
+                                 timeout=120), "addons listed"))
+    check("batch runs many steps at once", lambda: assert_true(
+        (lambda r: r["failed"] == 0 or _raise_batch(r))(
+            BRIDGE.call("batch", {"steps": [
+                {"command": "add_primitive", "params": {"type": "cube", "name": "BatchA"}},
+                {"command": "add_primitive", "params": {"type": "cube", "name": "BatchB"}},
+                {"command": "transform_objects", "params": {"objects": ["BatchA"],
+                                                             "location": [3, 0, 0]}},
+            ]}, timeout=240)),
+        "3 steps, 0 failures"))
+    check("batch reports per-step failures", lambda: assert_true(
+        BRIDGE.call("batch", {"steps": [
+            {"command": "not_a_command", "params": {}},
+        ]}, timeout=120)["failed"] == 1, "failure surfaced"))
+    check("batch stops on error when asked", lambda: assert_true(
+        BRIDGE.call("batch", {"steps": [
+            {"command": "not_a_command", "params": {}},
+            {"command": "add_primitive", "params": {"type": "cube", "name": "AfterFail"}},
+        ], "stop_on_error": True}, timeout=120)["executed"] == 1, "stopped early"))
+    check("batch needs steps", lambda: _expect_error(
+        BRIDGE.call, "batch", {"steps": []}, needle="batch needs a 'steps' list"))
+
+    # The undo guard that refuses to rewind across an Open File is deliberately
+    # NOT covered here: provoking it needs a file load, and wm.open_mainfile /
+    # wm.read_homefile from the bridge timer can block Blender indefinitely.
+    # The guard itself is exercised manually; see README "Known limits".
+
+    BRIDGE.shutdown()
 
     failures = [r for r in results if r[0] == FAIL]
     print("\n" + "=" * 70)
