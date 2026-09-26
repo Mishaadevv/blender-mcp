@@ -110,21 +110,29 @@ def view3d_override(**extra):
     """Run a block with a usable VIEW_3D area/region context.
 
     ``bpy.ops`` calls issued from a timer callback have no area context, which
-    makes anything viewport related fail. This grabs the first available
-    3D viewport and injects it into the context.
-    """
-    kwargs = {}
-    screen = bpy.context.screen
-    if screen is not None:
-        kwargs["screen"] = screen
-    if bpy.context.window is not None:
-        kwargs["window"] = bpy.context.window
+    makes anything viewport related fail. This finds a real VIEW_3D area and
+    injects it together with the window and screen that own it.
 
-    for scr in ([screen] if screen else list(bpy.data.screens)):
-        for area in scr.areas:
+    The window/screen/area triple has to be consistent: passing an area from
+    ``bpy.data.screens`` without its window raises "Area set with window &
+    screen set to None", so areas are only ever taken from a live window.
+    """
+    kwargs: dict[str, object] = {}
+    manager = bpy.context.window_manager
+    windows = list(getattr(manager, "windows", [])) if manager else []
+    if not windows and bpy.context.window is not None:
+        windows = [bpy.context.window]
+
+    for window in windows:
+        screen = window.screen
+        if screen is None:
+            continue
+        for area in screen.areas:
             if area.type != "VIEW_3D":
                 continue
             region = next((r for r in area.regions if r.type == "WINDOW"), None)
+            kwargs["window"] = window
+            kwargs["screen"] = screen
             kwargs["area"] = area
             if region is not None:
                 kwargs["region"] = region
@@ -132,6 +140,16 @@ def view3d_override(**extra):
             break
         if "area" in kwargs:
             break
+
+    if "area" not in kwargs and bpy.context.area is not None:
+        # no VIEW_3D anywhere; hand over whatever area we do have rather than
+        # injecting a mismatched one
+        kwargs["area"] = bpy.context.area
+        kwargs["region"] = bpy.context.region
+        if bpy.context.window is not None:
+            kwargs["window"] = bpy.context.window
+        if bpy.context.screen is not None:
+            kwargs["screen"] = bpy.context.screen
 
     kwargs.update({k: v for k, v in extra.items() if v is not None})
     with bpy.context.temp_override(**kwargs):

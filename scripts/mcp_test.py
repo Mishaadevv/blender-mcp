@@ -64,7 +64,7 @@ async def main() -> int:
             tools = (await session.list_tools()).tools
             names = sorted(t.name for t in tools)
             print(f"1. protocol\n  {len(names)} tools registered")
-            check("tools registered", len(names) >= 65, f"{len(names)} tools")
+            check("tools registered", len(names) >= 105, f"{len(names)} tools")
             check("all prefixed with blender_",
                   all(n.startswith("blender_") for n in names))
             check("setup tool present", "blender_setup" in names,
@@ -82,6 +82,11 @@ async def main() -> int:
             check("v2 tools present", not missing_v2,
                   "missing: " + ", ".join(missing_v2) if missing_v2
                   else f"all {len(v2)} present")
+            v3 = {"blender_make_material", "blender_build_shader", "blender_shader_info", "blender_set_shader_input", "blender_connect_shader", "blender_procedural_material", "blender_world_shader", "blender_paint_vertex_colors", "blender_material_report", "blender_download", "blender_import_asset", "blender_export_asset", "blender_list_libraries", "blender_search_library", "blender_fetch_asset", "blender_list_addons", "blender_manage_addon", "blender_list_packages", "blender_install_package", "blender_append_node_group", "blender_list_actions", "blender_manage_action", "blender_keyframe_channel", "blender_remove_keyframes", "blender_curves", "blender_nla", "blender_drivers", "blender_shape_keys", "blender_simulate", "blender_sequencer", "blender_camera_move", "blender_timeline", "blender_settings_report", "blender_set_setting", "blender_blend_contents", "blender_scripts_and_texts", "blender_filesystem", "blender_python_env", "blender_render_report", "blender_diagnose"}
+            missing_v3 = sorted(v3 - set(names))
+            check("v3 tools present", not missing_v3,
+                  "missing: " + ", ".join(missing_v3) if missing_v3
+                  else f"all {len(v3)} present")
             check("server instructions present",
                   bool((await session.list_tools()) and True))
             check("tool descriptions documented",

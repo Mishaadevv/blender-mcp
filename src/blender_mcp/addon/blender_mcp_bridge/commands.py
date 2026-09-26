@@ -24,6 +24,10 @@ from .bridge import CommandError, view3d_override
 from . import ops as _ops
 from . import textures as _tex
 from . import validate as _val
+from . import shading as _shade
+from . import assets as _assets
+from . import animation as _anim
+from . import inspector as _inspect
 
 # --------------------------------------------------------------------------- #
 # generic helpers
@@ -2232,6 +2236,218 @@ def cmd_render_extras(params):
     return _ops.render_extras(params)
 
 
+# --------------------------------------------------------------------------- #
+# v3: materials and shaders
+# --------------------------------------------------------------------------- #
+def cmd_create_material_preset(params):
+    """Create a PBR material from a named physical preset (car paint, chrome,
+    glass, leather, concrete, neon, ...) with per-socket overrides."""
+    return _shade.create_material(params)
+
+
+def cmd_build_shader(params):
+    """Build a node graph declaratively: nodes, sockets, links."""
+    return _shade.build_graph(params)
+
+
+def cmd_shader_info(params):
+    """Dump a material's node graph, sockets and connections."""
+    return _shade.graph_info(params)
+
+
+def cmd_set_shader_input(params):
+    """Set one input socket by node and socket name."""
+    return _shade.set_input(params)
+
+
+def cmd_connect_shader(params):
+    """Connect two node sockets."""
+    return _shade.connect(params)
+
+
+def cmd_procedural_material(params):
+    """Ready-made procedural surface: noise/voronoi/wave/checker driving colour,
+    roughness and bump."""
+    return _shade.procedural_surface(params)
+
+
+def cmd_world_shader(params):
+    """Build the world shader: flat colour, gradient, physical sky or HDRI."""
+    return _shade.world_shader(params)
+
+
+def cmd_paint_vertex_colors(params):
+    """Write per-vertex colours along an axis, for masks or toon shading."""
+    return _shade.paint_vertex_colors(params)
+
+
+def cmd_material_report(params):
+    """Every material with users, node count, images and blend settings."""
+    return _shade.material_report(params)
+
+
+# --------------------------------------------------------------------------- #
+# v3: assets from the internet, libraries, add-ons, packages
+# --------------------------------------------------------------------------- #
+def cmd_download(params):
+    """Fetch a URL to a local file. Nothing is executed."""
+    return _assets.download(params)
+
+
+def cmd_import_asset(params):
+    """Import a model from a URL or a local path, as separate editable objects."""
+    return _assets.import_asset(params)
+
+
+def cmd_export_asset(params):
+    """Export to fbx/obj/gltf/glb/usd/stl/abc with sensible defaults."""
+    return _assets.export_asset(params)
+
+
+def cmd_list_libraries(params):
+    return _assets.list_libraries(params)
+
+
+def cmd_search_library(params):
+    """Search a free CC0 asset library such as Poly Haven. No API key needed."""
+    return _assets.search_library(params)
+
+
+def cmd_fetch_asset(params):
+    """Download an asset from a library, and optionally import it or set it as
+    the world HDRI."""
+    return _assets.fetch_from_library(params)
+
+
+def cmd_addons_list(params):
+    return _assets.addons_list(params)
+
+
+def cmd_addons_manage(params):
+    """Enable, disable or install an add-on. Install requires confirm=true."""
+    return _assets.addons_manage(params)
+
+
+def cmd_packages_list(params):
+    return _assets.packages_list(params)
+
+
+def cmd_packages_install(params):
+    """pip install into a project-local directory. Requires confirm=true."""
+    return _assets.packages_install(params)
+
+
+def cmd_append_node_group(params):
+    """Append shader or geometry node groups from a .blend file."""
+    return _assets.node_group_append(params)
+
+
+# --------------------------------------------------------------------------- #
+# v3: animation, rigging, sequencing
+# --------------------------------------------------------------------------- #
+def cmd_actions_list(params):
+    return _anim.actions_list(params)
+
+
+def cmd_action_manage(params):
+    """Create, assign, rename, copy or remove an action."""
+    return _anim.action_manage(params)
+
+
+def cmd_keyframe_channel(params):
+    """Insert keys on any data path, optionally filling a frame range."""
+    return _anim.keyframe(params)
+
+
+def cmd_keyframe_remove(params):
+    return _anim.keyframe_remove(params)
+
+
+def cmd_curves(params):
+    """Inspect and shape F-curves: interpolation, easing, handles, noise and
+    cyclic modifiers, time shift, value scale."""
+    return _anim.curves(params)
+
+
+def cmd_nla(params):
+    """Non-linear animation: list, push an action to a track, mute, remove."""
+    return _anim.nla(params)
+
+
+def cmd_driver(params):
+    """Add, list or remove drivers with real variables and expressions."""
+    return _anim.driver(params)
+
+
+def cmd_shape_keys(params):
+    """List, add, set, deform or remove shape keys."""
+    return _anim.shape_keys(params)
+
+
+def cmd_simulate(params):
+    """Step, bake or reset a physics simulation."""
+    return _anim.simulate(params)
+
+
+def cmd_sequencer(params):
+    """Video sequencer: list, add, set the frame range, render, remove."""
+    return _anim.sequencer(params)
+
+
+def cmd_camera_move(params):
+    """Animate the camera: orbit turntable, follow constraint or dolly."""
+    return _anim.camera_move(params)
+
+
+def cmd_timeline(params):
+    """Frame range, fps and timeline markers."""
+    return _anim.timeline(params)
+
+
+# --------------------------------------------------------------------------- #
+# v3: project inspection
+# --------------------------------------------------------------------------- #
+def cmd_settings_report(params):
+    """Every setting the project is set to: scene, render, data, preferences,
+    files and handlers."""
+    return _inspect.settings_report(params)
+
+
+def cmd_settings_set(params):
+    """Change one setting by dotted path, e.g. group='render' path='resolution_x'."""
+    return _inspect.settings_set(params)
+
+
+def cmd_blend_contents(params):
+    """Every datablock in the file by type, with users, orphans and libraries."""
+    return _inspect.blend_contents(params)
+
+
+def cmd_scripts_and_texts(params):
+    """Embedded Text datablocks and .py files inside Blender's script paths."""
+    return _inspect.scripts_and_texts(params)
+
+
+def cmd_filesystem(params):
+    """List or search files. Confined to safe roots unless allow_anywhere."""
+    return _inspect.filesystem(params)
+
+
+def cmd_python_env(params):
+    """The interpreter, sys.path and importability of requested modules."""
+    return _inspect.python_env(params)
+
+
+def cmd_render_report(params):
+    """What a render would actually use, including the resolved output path."""
+    return _inspect.render_report(params)
+
+
+def cmd_diagnose(params):
+    """Quick project health report: what is actually wrong right now."""
+    return _inspect.diagnose(params)
+
+
 def cmd_batch(params):
     """Run many commands in a single round trip.
 
@@ -2354,4 +2570,48 @@ HANDLERS = {
     "render_extras": cmd_render_extras,
     # --- v2: batching ---------------------------------------------------
     "batch": cmd_batch,
+    # --- v3: materials and shaders ---------------------------------------
+    "create_material_preset": cmd_create_material_preset,
+    "build_shader": cmd_build_shader,
+    "shader_info": cmd_shader_info,
+    "set_shader_input": cmd_set_shader_input,
+    "connect_shader": cmd_connect_shader,
+    "procedural_material": cmd_procedural_material,
+    "world_shader": cmd_world_shader,
+    "paint_vertex_colors": cmd_paint_vertex_colors,
+    "material_report": cmd_material_report,
+    # --- v3: assets, libraries, add-ons, packages -----------------------
+    "download": cmd_download,
+    "import_asset": cmd_import_asset,
+    "export_asset": cmd_export_asset,
+    "list_libraries": cmd_list_libraries,
+    "search_library": cmd_search_library,
+    "fetch_asset": cmd_fetch_asset,
+    "addons_list": cmd_addons_list,
+    "addons_manage": cmd_addons_manage,
+    "packages_list": cmd_packages_list,
+    "packages_install": cmd_packages_install,
+    "append_node_group": cmd_append_node_group,
+    # --- v3: animation, rigging, sequencing -----------------------------
+    "actions_list": cmd_actions_list,
+    "action_manage": cmd_action_manage,
+    "keyframe_channel": cmd_keyframe_channel,
+    "keyframe_remove": cmd_keyframe_remove,
+    "curves": cmd_curves,
+    "nla": cmd_nla,
+    "driver": cmd_driver,
+    "shape_keys": cmd_shape_keys,
+    "simulate": cmd_simulate,
+    "sequencer": cmd_sequencer,
+    "camera_move": cmd_camera_move,
+    "timeline": cmd_timeline,
+    # --- v3: project inspection ------------------------------------------
+    "settings_report": cmd_settings_report,
+    "settings_set": cmd_settings_set,
+    "blend_contents": cmd_blend_contents,
+    "scripts_and_texts": cmd_scripts_and_texts,
+    "filesystem": cmd_filesystem,
+    "python_env": cmd_python_env,
+    "render_report": cmd_render_report,
+    "diagnose": cmd_diagnose,
 }

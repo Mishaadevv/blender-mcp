@@ -60,7 +60,27 @@ Plus three escape hatches for everything else:
 operator ids and property names of the Blender build it is talking to, instead of
 relying on the model's memory.
 
-**69 tools.** See [Tools](#tools).
+- **Author shaders**: 24 physically-set PBR presets (car paint with clear coat,
+  glass with transmission, leather, brushed steel, neon), a declarative
+  node-graph builder for anything the presets miss, one-call procedural
+  surfaces, world shaders including physical sky and HDRI, and vertex-colour masks
+- **Pull assets from the internet**: download any URL with a size cap and
+  checksum, or search and fetch CC0 HDRIs, textures and models from Poly Haven
+  with no API key. Import fbx, obj, gltf, glb, stl, ply, usd, abc, dae and blend
+  as separate editable objects, and export the same set back out
+- **Animate**: actions, F-curve shaping (interpolation, easing, handle types,
+  noise and cyclic modifiers, retiming), NLA tracks, drivers with real
+  variables, shape keys, physics stepping and baking, the video sequencer, and
+  camera orbits, follow constraints and dollies
+- **See and change everything**: a full settings report, single-setting writes by
+  dotted path, a datablock inventory with orphans and linked libraries, script
+  discovery, a sandboxed filesystem browser, the Python environment, a render
+  report and a `blender_diagnose` health check
+- **Manage the environment**: list, enable and disable add-ons, install them from
+  a zip, pip-install packages into a project-local directory, and append node
+  groups from another .blend
+
+**109 tools.** See [Tools](#tools).
 
 ## Install
 
@@ -190,6 +210,11 @@ Consequences worth knowing:
 |---|---|
 | Setup & status | `blender_setup`, `blender_status` |
 | **Validation** | `blender_validate`, `blender_find_problems`, `blender_analyze_mesh`, `blender_measure` |
+| **Materials & shaders** | `blender_make_material`, `blender_procedural_material`, `blender_build_shader`, `blender_shader_info`, `blender_set_shader_input`, `blender_connect_shader`, `blender_world_shader`, `blender_paint_vertex_colors`, `blender_material_report` |
+| **Assets from the net** | `blender_download`, `blender_import_asset`, `blender_export_asset`, `blender_list_libraries`, `blender_search_library`, `blender_fetch_asset` |
+| **Add-ons & libraries** | `blender_list_addons`, `blender_manage_addon`, `blender_list_packages`, `blender_install_package`, `blender_append_node_group` |
+| **Animation** | `blender_list_actions`, `blender_manage_action`, `blender_keyframe_channel`, `blender_remove_keyframes`, `blender_curves`, `blender_nla`, `blender_drivers`, `blender_shape_keys`, `blender_simulate`, `blender_sequencer`, `blender_camera_move`, `blender_timeline` |
+| **Project inspection** | `blender_settings_report`, `blender_set_setting`, `blender_blend_contents`, `blender_scripts_and_texts`, `blender_filesystem`, `blender_python_env`, `blender_render_report`, `blender_diagnose` |
 | **Textures** | `blender_generate_texture`, `blender_generate_pbr_set`, `blender_bake_texture`, `blender_pack_textures`, `blender_list_images` |
 | **Context & history** | `blender_set_context`, `blender_select_by`, `blender_checkpoint`, `blender_undo`, `blender_redo` |
 | **Geometry & UV** | `blender_geometry`, `blender_modifiers`, `blender_uv` |
@@ -242,7 +267,7 @@ Practical measures:
 ```bash
 python -m venv .venv && .venv/Scripts/python -m pip install -e ".[dev]"
 
-# 87 checks against a real Blender: geometry, bmesh, materials, render, export,
+# 126 checks against a real Blender: geometry, bmesh, materials, render, export,
 .venv/Scripts/python scripts/selftest.py
 
 #   plus validation, textures, context, geometry, UV, batching and undo safety
@@ -272,6 +297,21 @@ src/blender_mcp/
 
 ## Known limitations
 
+- Add-on installs and `pip install` both execute third-party code, so they are
+  **refused unless you pass `confirm=true`**. Packages go to a project-local
+  directory, never into Blender's bundled `site-packages`.
+- `blender_filesystem` is confined to your home directory, Blender's script
+  folders and the asset cache. `allow_anywhere` drops that, and should only be
+  used when you have actually asked for it.
+- `blender_undo` refuses to rewind across an Open File, because Blender's undo
+  stack does not survive a file load and attempting it crashes Blender. For the
+  same reason `blender_file_op` with `action="new"` can block: `wm.open_mainfile`
+  and `wm.read_homefile` driven from the bridge's timer may not return.
+- `blender_download` only accepts http and https, caps the size, and never
+  executes what it fetches. Poly Haven is wired up because it is CC0 and needs no
+  API key; sources that need credentials are deliberately not included.
+- The undo guard described above is not covered by the automated suite, because
+  provoking it requires a file load.
 - `blender_render` on Cycles at 1080p can take minutes; the timeout is raised to
   3600 s for renders, but prefer `eevee` while iterating.
 - `blender_capture_viewport` rasterises the current workspace, so it needs a 3D

@@ -64,7 +64,7 @@ Coordinates are Z-up, rotation is in degrees.
 mcp = MCPServer(
     name="blender",
     title="Blender 4.5 LTS",
-    version="2.0.0",
+    version="3.0.0",
     instructions=INSTRUCTIONS,
 )
 
@@ -1604,6 +1604,887 @@ def blender_batch(
     """
     return respond(call("batch", {"steps": steps, "stop_on_error": stop_on_error}),
                    response_format, title="Batch")
+
+
+# =========================================================================== #
+# v3: materials and shaders
+# =========================================================================== #
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_make_material(
+    name: Annotated[str, Field(description="Material name.")] = "Material",
+    preset: Annotated[str, Field(
+        description="Physical preset: plastic, matte, rubber, glass, frosted_glass, "
+                    "chrome, brushed_steel, gold, copper, aluminium, car_paint, "
+                    "car_paint_white, fabric, leather, wood, concrete, asphalt, "
+                    "ceramic, emissive, emissive_red, neon, toon, velvet, sponge.")] = "matte",
+    base_color: Annotated[list[float] | None, Field(description="RGB 0-1 override.")] = None,
+    metallic: Annotated[float | None, Field(description="0-1 override.")] = None,
+    roughness: Annotated[float | None, Field(description="0-1 override.")] = None,
+    ior: Annotated[float | None, Field(description="Index of refraction override.")] = None,
+    transmission: Annotated[float | None, Field(
+        description="0-1; 1 makes the surface glass-like.")] = None,
+    coat: Annotated[float | None, Field(
+        description="Clear coat weight, for car paint and lacquer.")] = None,
+    coat_roughness: Annotated[float | None, Field(description="0-1.")] = None,
+    emission_color: Annotated[list[float] | None, Field(description="RGB 0-1.")] = None,
+    emission_strength: Annotated[float | None, Field(description="0 and up.")] = None,
+    alpha: float = 1.0,
+    assign: Annotated[list[str] | None, Field(
+        description="Object names to assign the new material to.")] = None,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Create a physically sensible PBR material from a named preset.
+
+    Presets set the Principled BSDF correctly for the real substance - car paint
+    gets metallic plus a clear coat, glass gets transmission and IOR 1.52,
+    leather and fabric get high roughness, emissive presets get emission colour
+    and strength. Any socket can be overridden. Pass `assign` to put it on
+    objects in the same call.
+    """
+    return respond(call("create_material_preset", {
+        "name": name, "preset": preset, "base_color": base_color,
+        "metallic": metallic, "roughness": roughness, "ior": ior,
+        "transmission": transmission, "coat": coat,
+        "coat_roughness": coat_roughness, "emission_color": emission_color,
+        "emission_strength": emission_strength, "alpha": alpha, "assign": assign,
+    }), response_format, title="Material created")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_build_shader(
+    nodes: Annotated[list[dict], Field(
+        description="Node specs: {'id', 'type', 'location', 'inputs', 'properties'}. "
+                    "Type may be a friendly alias (noise, voronoi, ramp, bump, "
+                    "mix, mix_rgb, math, mapping, uv, image, fresnel, hsv, "
+                    "emission, add_shader, mix_shader, output).")],
+    name: Annotated[str, Field(description="Material to build the graph into.")] = "Shader",
+    links: Annotated[list[list], Field(
+        description="Connections as [from_id, from_socket, to_id, to_socket].")] = [],
+    assign: Annotated[list[str] | None, Field(description="Objects to assign to.")] = None,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Build an arbitrary shader node graph from a declarative description.
+
+    This is the full-control path when a preset is not enough. Socket names are
+    the real Blender ones, so anything from the manual works. Problems are
+    reported per node rather than aborting, so one bad socket does not cost you
+    the whole graph.
+    """
+    return respond(call("build_shader", {
+        "name": name, "nodes": nodes, "links": links, "assign": assign,
+    }), response_format, title="Shader graph built")
+
+
+@mcp.tool(annotations=READ)
+@guard
+def blender_shader_info(
+    name: Annotated[str, Field(description="Material to inspect.")] = "",
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Dump a material's node graph: every node, its unconnected inputs with
+    values, its outputs, and all links. Use it to find out what a material
+    actually is before editing it."""
+    return respond(call("shader_info", {"name": name}),
+                   response_format, title="Shader graph")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_set_shader_input(
+    material: str,
+    node: Annotated[str, Field(description="Node name in the graph.")],
+    socket: Annotated[str, Field(description="Input socket name, e.g. 'Base Color'.")],
+    value: Annotated[Any, Field(description="Value; a list of 3-4 for colours.")],
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Set one input socket on one node, by name. No guessing at socket indices."""
+    return respond(call("set_shader_input", {
+        "material": material, "node": node, "socket": socket, "value": value,
+    }), response_format, title="Shader input set")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_connect_shader(
+    material: str,
+    from_node: str,
+    from_socket: str,
+    to_node: str,
+    to_socket: str,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Connect an output socket to an input socket inside a material."""
+    return respond(call("connect_shader", {
+        "material": material, "from_node": from_node, "from_socket": from_socket,
+        "to_node": to_node, "to_socket": to_socket,
+    }), response_format, title="Shader connected")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_procedural_material(
+    name: Annotated[str, Field(description="Material name.")] = "Procedural",
+    pattern: Annotated[Literal["noise", "fbm", "voronoi", "wave", "checker"], Field(
+        description="Driver texture.")] = "fbm",
+    scale: Annotated[float, Field(description="Feature size.")] = 6.0,
+    detail: float = 8.0,
+    distortion: float = 0.0,
+    feature: Annotated[str, Field(
+        description="Voronoi feature: F1, F2, SMOOTH_F1, DISTANCE_TO_EDGE.")] = "F1",
+    wave_type: Annotated[str, Field(
+        description="Wave type: BANDS, RINGS, X, Y, Z, DIAGONAL.")] = "BANDS",
+    color_a: Annotated[list[float], Field(description="Low colour RGB.")] = [0.05, 0.05, 0.05],
+    color_b: Annotated[list[float], Field(description="High colour RGB.")] = [0.6, 0.6, 0.6],
+    ramp_low: float = 0.25,
+    ramp_high: float = 0.75,
+    rough_low: float = 0.25,
+    rough_high: float = 0.85,
+    metallic: float = 0.0,
+    bump_strength: Annotated[float, Field(description="0-1 bump relief.")] = 0.25,
+    bump_distance: float = 0.02,
+    assign: Annotated[list[str] | None, Field(description="Objects to assign to.")] = None,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Build a complete procedural surface in one call.
+
+    Wires a coordinate and mapping node to a noise, voronoi, wave or checker
+    texture, then through a colour ramp into Base Color, a map-range into
+    Roughness, and the raw field into a bump node. This is the graph most
+    hard-surface and natural surfaces actually need, and it is tedious to
+    assemble socket by socket.
+    """
+    return respond(call("procedural_material", {
+        "name": name, "pattern": pattern, "scale": scale, "detail": detail,
+        "distortion": distortion, "feature": feature, "wave_type": wave_type,
+        "color_a": color_a, "color_b": color_b, "ramp_low": ramp_low,
+        "ramp_high": ramp_high, "rough_low": rough_low, "rough_high": rough_high,
+        "metallic": metallic, "bump_strength": bump_strength,
+        "bump_distance": bump_distance, "assign": assign,
+    }), response_format, title="Procedural material")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_world_shader(
+    type: Annotated[Literal["color", "gradient", "sky", "image"], Field(
+        description="World shader type; 'image' sets an HDRI.")] = "sky",
+    color: Annotated[list[float], Field(description="For type='color', RGB.")] = [0.05, 0.05, 0.06],
+    top_color: Annotated[list[float], Field(description="Gradient top RGB.")] = [0.25, 0.35, 0.55],
+    bottom_color: Annotated[list[float], Field(description="Gradient bottom RGB.")] = [0.02, 0.02, 0.03],
+    angle: float = 90.0,
+    sky_type: Annotated[Literal["NISHITA", "PREETHAM", "HOSEK_WILKIE"], Field(
+        description="Physical sky model.")] = "NISHITA",
+    sun_elevation: Annotated[float, Field(description="Degrees above horizon.")] = 25.0,
+    sun_rotation: Annotated[float, Field(description="Degrees around Z.")] = 135.0,
+    altitude: Annotated[float, Field(description="Metres, Nishita only.")] = 100.0,
+    air_density: float = 1.0,
+    path: Annotated[str, Field(
+        description="For type='image', an .hdr or .exr file.")] = "",
+    rotation: Annotated[float, Field(description="HDRI rotation in degrees.")] = 0.0,
+    strength: float = 1.0,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Build the world shader: flat colour, vertical gradient, physical sky, or
+    an HDRI image. Nishita with sun elevation gives a believable daylight
+    environment without an HDRI download."""
+    return respond(call("world_shader", {
+        "type": type, "color": color, "top_color": top_color,
+        "bottom_color": bottom_color, "angle": angle, "sky_type": sky_type,
+        "sun_elevation": sun_elevation, "sun_rotation": sun_rotation,
+        "altitude": altitude, "air_density": air_density, "path": path,
+        "rotation": rotation, "strength": strength,
+    }), response_format, title="World shader")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_paint_vertex_colors(
+    object: str,
+    axis: Annotated[Literal["X", "Y", "Z"], Field(
+        description="Axis to ramp along.")] = "Z",
+    color_a: Annotated[list[float], Field(description="Colour at the low end.")] = [0, 0, 0],
+    color_b: Annotated[list[float], Field(description="Colour at the high end.")] = [1, 1, 1],
+    layer: Annotated[str, Field(description="Colour attribute name.")] = "Col",
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Write per-vertex colours as a gradient along an axis. Useful as a mask,
+    for toon shading, or for baking masks into a vertex colour layer."""
+    return respond(call("paint_vertex_colors", {
+        "object": object, "axis": axis, "color_a": color_a, "color_b": color_b,
+        "layer": layer,
+    }), response_format, title="Vertex colours")
+
+
+@mcp.tool(annotations=READ)
+@guard
+def blender_material_report(limit: int = 200, response_format: FORMAT = "markdown") -> Any:
+    """List every material with its users, the objects using it, node count,
+    linked images and blend settings."""
+    return respond(call("material_report", {"limit": limit}),
+                   response_format, title="Materials")
+
+
+# =========================================================================== #
+# v3: assets from the internet, libraries, add-ons, packages
+# =========================================================================== #
+
+
+@mcp.tool(annotations=SLOW)
+@guard
+def blender_download(
+    url: str,
+    filename: Annotated[str, Field(description="Save as; defaults to the URL basename.")] = "",
+    directory: Annotated[str, Field(
+        description="Subfolder under ~/BlenderMCP_Assets.")] = "downloads",
+    max_bytes: Annotated[int, Field(
+        description="Size cap in bytes; default 256 MB.")] = 268_435_456,
+    timeout: float = 60.0,
+    sha256: Annotated[str, Field(
+        description="Expected checksum; the call fails on mismatch.")] = "",
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Fetch a URL to a local file and report its size and SHA-256.
+
+    Only http and https are allowed, the download is size-capped, and nothing
+    downloaded is ever executed. Combine with `blender_import_asset` to pull a
+    model straight onto the scene.
+    """
+    return respond(call("download", {
+        "url": url, "filename": filename, "directory": directory,
+        "max_bytes": max_bytes, "timeout": timeout, "sha256": sha256,
+    }), response_format, title="Downloaded")
+
+
+@mcp.tool(annotations=SLOW)
+@guard
+def blender_import_asset(
+    url: Annotated[str, Field(description="Model URL to download first.")] = "",
+    path: Annotated[str, Field(description="Or a local file path.")] = "",
+    into_collection: Annotated[str, Field(
+        description="Link the imported objects into this collection.")] = "",
+    max_bytes: int = 268_435_456,
+    timeout: float = 120.0,
+    import_options: Annotated[dict, Field(
+        description="Importer-specific options passed straight through, e.g. "
+                    "{'global_scale': 0.01} for FBX or {'use_materials': True}.")] = {},
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Import a 3D model from a URL or a local file, as separate editable objects.
+
+    Handles fbx, obj, gltf, glb, stl, ply, usd, usdz, abc, dae and blend. A URL
+    is downloaded first, respecting the size cap. Everything arrives as ordinary
+    objects you can then validate, modify and export.
+    """
+    return respond(call("import_asset", {
+        "url": url, "path": path, "into_collection": into_collection,
+        "max_bytes": max_bytes, "timeout": timeout, "import_options": import_options,
+    }), response_format, title="Asset imported")
+
+
+@mcp.tool(annotations=SLOW)
+@guard
+def blender_export_asset(
+    path: str,
+    format: Annotated[str, Field(
+        description="FBX, OBJ, GLTF, GLB, USD, STL or ALEMBIC. Inferred from the "
+                    "extension when omitted.")] = "",
+    objects: Annotated[list[str] | None, Field(
+        description="Export only these; default is the selection.")] = None,
+    export_options: Annotated[dict, Field(
+        description="Exporter options passed straight through, e.g. "
+                    "{'draco_mesh_compression_enable': True} for glTF.")] = {},
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Export the scene or a named set of objects to a model file.
+
+    Sensible defaults per format: fbx applies scale and bakes modifiers with
+    materials embedded, glTF applies modifiers and exports textures, obj keeps
+    normals and UVs. The call fails if the exporter reports success but no file
+    appears, rather than claiming a lie.
+    """
+    return respond(call("export_asset", {
+        "path": path, "format": format, "objects": objects,
+        "export_options": export_options,
+    }), response_format, title="Exported")
+
+
+@mcp.tool(annotations=READ)
+@guard
+def blender_list_libraries(response_format: FORMAT = "markdown") -> Any:
+    """List the asset libraries available for search and download."""
+    return respond(call("list_libraries", {}), response_format, title="Libraries")
+
+
+@mcp.tool(annotations=SLOW)
+@guard
+def blender_search_library(
+    type: Annotated[Literal["hdris", "textures", "models"], Field(
+        description="Asset category.")] = "hdris",
+    query: Annotated[str, Field(description="Substring filter on name and tags.")] = "",
+    library: Annotated[str, Field(description="Library id; default polyhaven.")] = "polyhaven",
+    limit: int = 25,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Search a free CC0 asset library. Poly Haven needs no API key.
+
+    Returns ids you pass to `blender_fetch_asset`. Useful for grabbing a real
+    HDRI or a photogrammetry texture instead of hand-rolling one.
+    """
+    return respond(call("search_library", {
+        "type": type, "query": query, "library": library, "limit": limit,
+    }), response_format, title="Library search")
+
+
+@mcp.tool(annotations=SLOW)
+@guard
+def blender_fetch_asset(
+    id: str,
+    type: Annotated[Literal["hdris", "textures", "models"], Field(
+        description="Asset category, must match the search.")] = "hdris",
+    resolution: Annotated[str, Field(
+        description="1k, 2k, 4k, 8k for HDRIs; 1k/2k/4k for textures.")] = "1k",
+    library: str = "polyhaven",
+    set_as_world: Annotated[bool, Field(
+        description="For HDRIs, wire it into the world shader automatically.")] = True,
+    strength: float = 1.0,
+    rotation: float = 0.0,
+    into_collection: Annotated[str, Field(
+        description="For models, import into this collection.")] = "",
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Download an asset from a library by id, and optionally use it.
+
+    An HDRI becomes the world lighting in one call, which is the fastest route
+    to a believable render without any HDRI hunting.
+    """
+    return respond(call("fetch_asset", {
+        "id": id, "type": type, "resolution": resolution, "library": library,
+        "set_as_world": set_as_world, "strength": strength, "rotation": rotation,
+        "into_collection": into_collection,
+    }), response_format, title="Asset fetched")
+
+
+@mcp.tool(annotations=READ)
+@guard
+def blender_list_addons(response_format: FORMAT = "markdown") -> Any:
+    """List every available Blender add-on with its enabled state and version."""
+    return respond(call("addons_list", {}), response_format, title="Add-ons")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_manage_addon(
+    addon: Annotated[str, Field(description="Add-on module name, e.g. io_scene_gltf2.")],
+    action: Annotated[Literal["enable", "disable", "install"], Field(
+        description="What to do.")] = "enable",
+    path: Annotated[str, Field(description="For install, a local .zip.")] = "",
+    url: Annotated[str, Field(description="For install, a URL to a .zip.")] = "",
+    module: Annotated[str, Field(
+        description="Module name to enable after install, if it differs from the file.")] = "",
+    enable: Annotated[bool, Field(description="Enable right after installing.")] = True,
+    confirm: Annotated[bool, Field(
+        description="Required for install: it executes third-party code.")] = False,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Enable, disable or install a Blender add-on.
+
+    Installing requires `confirm=true` because it runs third-party code inside
+    Blender. Only .zip archives are accepted, and the call is refused without
+    that flag so an agent cannot silently install anything.
+    """
+    return respond(call("addons_manage", {
+        "addon": addon, "action": action, "path": path, "url": url,
+        "module": module, "enable": enable, "confirm": confirm,
+    }), response_format, title="Add-on")
+
+
+@mcp.tool(annotations=READ)
+@guard
+def blender_list_packages(response_format: FORMAT = "markdown") -> Any:
+    """List the Python packages Blender's own interpreter can see, with sys.path
+    and the project-local directory new packages go into."""
+    return respond(call("packages_list", {}), response_format, title="Packages")
+
+
+@mcp.tool(annotations=SLOW)
+@guard
+def blender_install_package(
+    package: Annotated[str, Field(description="Requirement, e.g. 'scipy>=1.11'.")],
+    confirm: Annotated[bool, Field(
+        description="Required: pip install downloads and executes code.")] = False,
+    no_deps: bool = False,
+    timeout: float = 600.0,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """pip install a package into a project-local directory.
+
+    Packages go to their own directory, never into Blender's bundled
+    site-packages, so a bad dependency cannot break the application. Refused
+    without `confirm=true`.
+    """
+    return respond(call("packages_install", {
+        "package": package, "confirm": confirm, "no_deps": no_deps,
+        "timeout": timeout,
+    }), response_format, title="Package installed")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_append_node_group(
+    path: str,
+    names: Annotated[list[str] | None, Field(
+        description="Only append these node group names.")] = None,
+    assign_to_material: Annotated[str, Field(
+        description="Material whose existing group node should use the first one.")] = "",
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Append shader or geometry node groups from another .blend file, so you can
+    reuse an existing shader library instead of rebuilding graphs by hand."""
+    return respond(call("append_node_group", {
+        "path": path, "names": names, "assign_to_material": assign_to_material,
+    }), response_format, title="Node groups appended")
+
+
+# =========================================================================== #
+# v3: animation, rigging, sequencing
+# =========================================================================== #
+
+
+@mcp.tool(annotations=READ)
+@guard
+def blender_list_actions(response_format: FORMAT = "markdown") -> Any:
+    """List every action with its frame range, user count, slot names and how
+    many objects use it."""
+    return respond(call("actions_list", {}), response_format, title="Actions")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_manage_action(
+    op: Annotated[Literal["create", "assign", "rename", "copy", "remove"], Field(
+        description="What to do.")] = "create",
+    action: Annotated[str, Field(description="Action name, or new name for rename.")] = "",
+    object: Annotated[str, Field(description="Object for create/assign.")] = "",
+    new_name: Annotated[str, Field(description="Name for rename/copy.")] = "",
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Create, assign, rename, copy or remove an action.
+
+    Handles Blender 4.4+ slotted actions, creating the slot up front so keys can
+    be inserted immediately afterwards.
+    """
+    return respond(call("action_manage", {
+        "op": op, "action": action, "object": object, "new_name": new_name,
+    }), response_format, title="Action")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_keyframe_channel(
+    object: str,
+    data_path: Annotated[str, Field(
+        description="'location', 'rotation_euler', 'scale', or a full RNA path such "
+                    "as 'modifiers[\"Subsurf\"].levels'.")] = "location",
+    frame: int = 1,
+    index: Annotated[int | None, Field(
+        description="Array index; omit to key all components.")] = None,
+    frame_end: Annotated[int | None, Field(
+        description="Fill keys from `frame` to here.")] = None,
+    step: int = 1,
+    group: str = "",
+    keyframe_type: Annotated[Literal["KEYFRAME", "BREAKDOWN", "MOVING_HOLD",
+                                      "EXTREME", "JITTER"], Field(
+        description="Keyframe type for Blender's animation types.")] = "",
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Insert keyframes on any data path, including modifier levels and custom
+    properties, optionally filling a whole frame range.
+
+    Broader than the original keyframe tool, which only handled the three
+    standard transforms.
+    """
+    return respond(call("keyframe_channel", {
+        "object": object, "data_path": data_path, "frame": frame, "index": index,
+        "frame_end": frame_end, "step": step, "group": group,
+        "keyframe_type": keyframe_type,
+    }), response_format, title="Keyframes inserted")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_remove_keyframes(
+    object: str,
+    data_path: str = "location",
+    frame_start: int = 0,
+    frame_end: int = 10000,
+    all: Annotated[bool, Field(
+        description="Clear the whole action instead of a frame range.")] = False,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Delete keyframes from a data path over a frame range, or clear the whole
+    animation data on an object."""
+    return respond(call("keyframe_remove", {
+        "object": object, "data_path": data_path, "frame_start": frame_start,
+        "frame_end": frame_end, "all": all,
+    }), response_format, title="Keyframes removed")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_curves(
+    op: Annotated[Literal["list", "interpolation", "handles", "add_modifier",
+                          "remove_modifier", "shift", "scale_values"], Field(
+        description="What to do with the F-curves.")],
+    object: str,
+    interpolation: Annotated[Literal["CONSTANT", "LINEAR", "BEZIER", "SINE", "QUAD",
+                                     "CUBIC", "QUART", "QUINT", "EXPO", "CIRC",
+                                     "BACK", "BOUNCE", "ELASTIC"], Field(
+        description="For op='interpolation'.")] = "BEZIER",
+    easing: Annotated[Literal["AUTO", "EASE_IN", "EASE_OUT", "EASE_IN_OUT",
+                               "AUTO_CLAMPED"], Field(
+        description="Easing for the non-Bezier modes.")] = "AUTO",
+    handle_type: Annotated[Literal["FREE", "AUTO", "VECTOR", "ALIGNED",
+                                   "AUTO_CLAMPED"], Field(
+        description="For op='handles'.")] = "AUTO_CLAMPED",
+    modifier: Annotated[str, Field(
+        description="For op='add_modifier': CYCLES, NOISE, GENERATOR, LIMITS, "
+                    "STEPPED, GENERATOR.")] = "CYCLES",
+    properties: Annotated[dict, Field(
+        description="Modifier properties, e.g. {'mode_before': 'REPEAT'}.")] = {},
+    data_path: Annotated[str, Field(
+        description="Restrict to one F-curve data path.")] = "",
+    frames: Annotated[float, Field(description="For op='shift', frames to move by.")] = 0.0,
+    factor: Annotated[float, Field(description="For op='scale_values'.")] = 1.0,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Inspect and shape the F-curves of an object's action.
+
+    This is where animation gets its character rather than just its timing:
+    interpolation and easing, handle types, noise and cyclic modifiers, retiming
+    the whole curve, or scaling its values.
+    """
+    return respond(call("curves", {
+        "op": op, "object": object, "interpolation": interpolation, "easing": easing,
+        "handle_type": handle_type, "modifier": modifier, "properties": properties,
+        "data_path": data_path, "frames": frames, "factor": factor,
+    }), response_format, title="F-curves")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_nla(
+    op: Annotated[Literal["list", "push", "mute", "remove"], Field(
+        description="What to do with non-linear animation.")],
+    object: str,
+    action: Annotated[str, Field(description="For op='push', the action to push.")] = "",
+    track: Annotated[str, Field(description="Track name.")] = "",
+    frame_start: int = 1,
+    frame_end: int = 0,
+    blend_type: Annotated[Literal["REPLACE", "ADD", "SUBTRACT", "MULTIPLY"], Field(
+        description="How the strip blends with lower tracks.")] = "REPLACE",
+    value: Annotated[bool, Field(description="For op='mute'.")] = True,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Drive non-linear animation: push an action onto its own track so the
+    active action stops driving the pose, then layer, blend and mute strips."""
+    return respond(call("nla", {
+        "op": op, "object": object, "action": action, "track": track,
+        "frame_start": frame_start, "frame_end": frame_end,
+        "blend_type": blend_type, "value": value,
+    }), response_format, title="NLA")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_drivers(
+    op: Annotated[Literal["add", "list", "remove"], Field(
+        description="What to do with drivers.")] = "add",
+    object: str = "",
+    data_path: str = "location",
+    index: Annotated[int | None, Field(description="Array index.")] = None,
+    type: Annotated[Literal["SCRIPTED", "AVERAGE", "SUM", "DIFFERENCE", "PRODUCT",
+                            "MINIMUM", "MAXIMUM", "MODULO"], Field(
+        description="Driver type for op='add'.")] = "SCRIPTED",
+    expression: Annotated[str, Field(
+        description="Python expression for op='add', e.g. 'frame * 0.1' or "
+                    "'sin(frame/10)'.")] = "frame * 0.1",
+    variables: Annotated[list[dict], Field(
+        description="Driver variables: {'name', 'type', 'id_type', 'object', "
+                    "'target'}. Defaults to a single 'frame' property.")] = [],
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Add, list or remove drivers with real typed variables and expressions.
+
+    Useful for procedural motion that should not be baked: spin a wheel from the
+    frame counter, bob something with a sine, or link a value to a custom
+    property.
+    """
+    return respond(call("driver", {
+        "op": op, "object": object, "data_path": data_path, "index": index,
+        "type": type, "expression": expression, "variables": variables,
+    }), response_format, title="Drivers")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_shape_keys(
+    op: Annotated[Literal["list", "add", "set", "deform", "remove"], Field(
+        description="What to do with shape keys.")] = "list",
+    object: str = "",
+    key: Annotated[str, Field(description="Shape key name.")] = "",
+    value: Annotated[float, Field(description="For op='set', the slider value.")] = 0.0,
+    min: float = 0.0,
+    max: float = 1.0,
+    offset: Annotated[list[float], Field(
+        description="For op='deform', a translation to add.")] = [0, 0, 0],
+    vertices: Annotated[list[int], Field(
+        description="For op='deform', only move these vertex indices.")] = [],
+    from_mix: bool = False,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Create and drive shape keys: facial blends, damage states, LOD morphs or
+    simple deformation without touching the base mesh."""
+    return respond(call("shape_keys", {
+        "op": op, "object": object, "key": key, "value": value, "min": min,
+        "max": max, "offset": offset, "vertices": vertices, "from_mix": from_mix,
+    }), response_format, title="Shape keys")
+
+
+@mcp.tool(annotations=SLOW)
+@guard
+def blender_simulate(
+    op: Annotated[Literal["step", "bake", "reset"], Field(
+        description="Step, bake to keyframes, or reset the cache.")] = "step",
+    objects: Annotated[list[str] | None, Field(
+        description="Objects to bake or reset.")] = None,
+    frames: int = 60,
+    frame_start: int = 0,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Step a physics simulation forward, bake it to keyframes, or reset the
+    point cache. Bake is how a cloth or soft-body result becomes a usable
+    animation rather than a live simulation."""
+    return respond(call("simulate", {
+        "op": op, "objects": objects, "frames": frames, "frame_start": frame_start,
+    }), response_format, title="Simulation")
+
+
+@mcp.tool(annotations=SLOW)
+@guard
+def blender_sequencer(
+    op: Annotated[Literal["list", "add", "set_range", "render", "remove"], Field(
+        description="What to do in the video sequencer.")] = "list",
+    path: Annotated[str, Field(description="For op='add', an image or movie file.")] = "",
+    name: Annotated[str, Field(description="Strip name.")] = "clip",
+    channel: int = 1,
+    frame_start: int = 1,
+    frame_end: int = 0,
+    start: int = 1,
+    end: int = 250,
+    mode: Annotated[Literal["MOVIE", "PNG", "OPEN_EXR", "FFMPEG"], Field(
+        description="For op='render'.")] = "MOVIE",
+    output: Annotated[str, Field(description="Output path or directory.")] = "",
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Drive the video sequencer: add movie or image strips to channels, set the
+    frame range, and render the sequence out to a movie or image sequence.
+
+    This is the route to an actual rendered video rather than a single still.
+    """
+    return respond(call("sequencer", {
+        "op": op, "path": path, "name": name, "channel": channel,
+        "frame_start": frame_start, "frame_end": frame_end, "start": start,
+        "end": end, "mode": mode, "output": output,
+    }), response_format, title="Sequencer")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_camera_move(
+    mode: Annotated[Literal["orbit", "constraint", "dolly"], Field(
+        description="Orbit turntable, follow constraint, or dolly move.")] = "orbit",
+    camera: Annotated[str, Field(
+        description="Camera name; defaults to the active camera.")] = "",
+    pivot: Annotated[list[float], Field(description="Rotation/dolly pivot.")] = [0, 0, 0],
+    frames: int = 8,
+    frame_start: int = 1,
+    full_turn: Annotated[bool, Field(
+        description="For orbit, a full 360 degrees or a sweep.")] = True,
+    radius: Annotated[float, Field(description="Orbit radius; from the camera.")] = 0.0,
+    target: Annotated[str, Field(
+        description="For constraint, the object to follow.")] = "",
+    constraint: Annotated[Literal["TRACK_TO", "DAMPED_TRACK", "LOCKED_TRACK",
+                                    "COPY_LOCATION", "COPY_ROTATION", "FOLLOW_PATH"],
+                          Field(description="For constraint.")] = "TRACK_TO",
+    track_axis: str = "TRACK_NEGATIVE_Z",
+    up_axis: str = "UP_Y",
+    frame_end: int = 48,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Animate the camera: a keyed orbit turntable, a follow constraint, or a
+    two-point dolly.
+
+    The orbit mode is the quickest route to a review turntable around a model -
+    keys and constraints both, so it renders deterministically.
+    """
+    return respond(call("camera_move", {
+        "mode": mode, "camera": camera, "pivot": pivot, "frames": frames,
+        "frame_start": frame_start, "full_turn": full_turn, "radius": radius,
+        "target": target, "constraint": constraint, "track_axis": track_axis,
+        "up_axis": up_axis, "frame_end": frame_end,
+    }), response_format, title="Camera animated")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_timeline(
+    op: Annotated[Literal["report", "set", "add_marker", "remove_marker"], Field(
+        description="What to do.")] = "report",
+    start: int = 1,
+    end: int = 250,
+    fps: int = 24,
+    fps_base: float = 1.0,
+    step: int = 1,
+    name: Annotated[str, Field(description="Marker name.")] = "Marker",
+    frame: int = 1,
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Report or set the frame range, fps and step, and manage timeline markers."""
+    return respond(call("timeline", {
+        "op": op, "start": start, "end": end, "fps": fps, "fps_base": fps_base,
+        "step": step, "name": name, "frame": frame,
+    }), response_format, title="Timeline")
+
+
+# =========================================================================== #
+# v3: project inspection
+# =========================================================================== #
+
+
+@mcp.tool(annotations=READ)
+@guard
+def blender_settings_report(
+    groups: Annotated[list[str] | None, Field(
+        description="Subset of scene, render, data, preferences, files, handlers. "
+                    "Default is all of them.")] = None,
+    response_format: FORMAT = "json",
+) -> Any:
+    """Report what the project is actually set to.
+
+    Covers the scene, the full render configuration including Cycles and EEVEE
+    sampling and colour management, datablock counts, user preferences, file
+    paths, linked libraries and registered handlers. This is the answer to
+    "what are the current settings".
+    """
+    return respond(call("settings_report", {"groups": groups}),
+                   response_format, title="Project settings")
+
+
+@mcp.tool(annotations=WRITE)
+@guard
+def blender_set_setting(
+    group: Annotated[Literal["render", "scene", "cycles", "eevee", "view",
+                             "preferences", "unit", "world"], Field(
+        description="Which settings root to change.")],
+    path: Annotated[str, Field(
+        description="Dotted attribute path inside that root, e.g. 'resolution_x' "
+                    "or 'frame_end'.")],
+    value: Annotated[Any, Field(description="New value.")],
+    response_format: FORMAT = "markdown",
+) -> Any:
+    """Change any single project setting by dotted path, and report the old and
+    new value.
+
+    Deliberately one setting per call: a bulk setter would let a wrong path
+    silently wreck a whole configuration.
+    """
+    return respond(call("settings_set", {"group": group, "path": path, "value": value}),
+                   response_format, title="Setting changed")
+
+
+@mcp.tool(annotations=READ)
+@guard
+def blender_blend_contents(
+    types: Annotated[list[str] | None, Field(
+        description="Datablock types to include, e.g. ['meshes', 'materials'].")] = None,
+    response_format: FORMAT = "json",
+) -> Any:
+    """Inventory every datablock in the file by type, with user counts, orphans
+    and which library each came from. The fastest way to see what a .blend
+    actually contains before merging or cleaning it."""
+    return respond(call("blend_contents", {"types": types}),
+                   response_format, title="Blend contents")
+
+
+@mcp.tool(annotations=READ)
+@guard
+def blender_scripts_and_texts(response_format: FORMAT = "json") -> Any:
+    """List embedded Text datablocks and every .py file inside Blender's script
+    paths, with sizes. Use it to find an add-on's or a script's real location."""
+    return respond(call("scripts_and_texts", {}), response_format, title="Scripts")
+
+
+@mcp.tool(annotations=READ)
+@guard
+def blender_filesystem(
+    path: Annotated[str, Field(
+        description="Directory to list. Omit to see the allowed roots.")] = "",
+    pattern: Annotated[str, Field(description="Glob filter, e.g. '*.hdr'.")] = "*",
+    roots: Annotated[list[str] | None, Field(
+        description="Override the allowed roots for this call.")] = None,
+    allow_anywhere: Annotated[bool, Field(
+        description="Drop the root restriction. Off by default on purpose: an "
+                    "agent that can read the whole disk is a liability.")] = False,
+    limit: int = 300,
+    response_format: FORMAT = "json",
+) -> Any:
+    """List or search files, restricted to the user's home directory, Blender's
+    script folders and the asset cache by default.
+
+    Pass `allow_anywhere` only when the user has actually asked for it.
+    """
+    return respond(call("filesystem", {
+        "path": path, "pattern": pattern, "roots": roots,
+        "allow_anywhere": allow_anywhere, "limit": limit,
+    }), response_format, title="Filesystem")
+
+
+@mcp.tool(annotations=READ)
+@guard
+def blender_python_env(
+    modules: Annotated[list[str] | None, Field(
+        description="Module names to test for importability, e.g. ['numpy','scipy'].")] = None,
+    response_format: FORMAT = "json",
+) -> Any:
+    """Report Blender's interpreter, sys.path, script paths and whether given
+    modules can be imported. Use it before relying on a library."""
+    return respond(call("python_env", {"modules": modules}),
+                   response_format, title="Python environment")
+
+
+@mcp.tool(annotations=READ)
+@guard
+def blender_render_report(response_format: FORMAT = "json") -> Any:
+    """Report what a render would actually use: engine, effective resolution,
+    frame range, resolved output path and whether that directory exists, colour
+    management, camera and lights."""
+    return respond(call("render_report", {}), response_format, title="Render report")
+
+
+@mcp.tool(annotations=READ)
+@guard
+def blender_diagnose(response_format: FORMAT = "markdown") -> Any:
+    """Quick health check on the project: missing camera, unpacked textures,
+    orphan datablocks, missing linked libraries, meshes without materials,
+    or Blender running headless.
+
+    Cheaper than a full validate when you just want to know what is wrong.
+    """
+    return respond(call("diagnose", {}), response_format, title="Diagnosis")
 
 
 def main() -> None:  # pragma: no cover

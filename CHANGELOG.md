@@ -4,6 +4,74 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-09-26
+
+Full control over Blender: shader authoring, internet assets, add-on and package
+management, complete animation, and project-wide inspection. 69 tools -> 109.
+
+### Added
+
+- **Material and shader authoring.** `blender_make_material` creates PBR
+  materials from 24 physically-set presets (car paint gets metallic plus a clear
+  coat, glass gets transmission and IOR 1.52, leather and fabric get high
+  roughness), with per-socket overrides and optional assignment in one call.
+  `blender_build_shader` builds an arbitrary node graph from a declarative
+  description of nodes, sockets and links, reporting bad sockets per node rather
+  than aborting. `blender_shader_info`, `blender_set_shader_input`,
+  `blender_connect_shader`, `blender_procedural_material` (noise/voronoi/wave/
+  checker driving colour, roughness and bump), `blender_world_shader` (colour,
+  gradient, physical sky, HDRI), `blender_paint_vertex_colors` and
+  `blender_material_report`.
+- **Assets from the internet.** `blender_download` fetches a URL with a size cap
+  and SHA-256 verification. `blender_search_library` and `blender_fetch_asset`
+  reach CC0 HDRIs, textures and models on Poly Haven with no API key, and can set
+  a fetched HDRI as the world in the same call. `blender_import_asset` and
+  `blender_export_asset` handle fbx, obj, gltf, glb, stl, ply, usd, usdz, abc,
+  dae and blend with sensible per-format defaults.
+- **Add-ons and Python packages.** `blender_list_addons` and
+  `blender_manage_addon` list, enable, disable and install add-ons;
+  `blender_list_packages` and `blender_install_package` manage Python packages;
+  `blender_append_node_group` reuses shader and geometry node groups from another
+  .blend. Installs are refused without `confirm=true`, and pip targets a
+  project-local directory rather than Blender's own site-packages.
+- **Complete animation.** `blender_list_actions`, `blender_manage_action`,
+  `blender_keyframe_channel` (any data path, including modifier levels, over a
+  frame range), `blender_remove_keyframes`, `blender_curves` (interpolation,
+  easing, handle types, noise/cyclic/limit modifiers, retiming, value scaling),
+  `blender_nla`, `blender_drivers` with real typed variables, `blender_shape_keys`,
+  `blender_simulate` (step, bake, reset), `blender_sequencer` and
+  `blender_camera_move` (orbit turntable, follow constraint, dolly),
+  `blender_timeline`.
+- **Project-wide inspection.** `blender_settings_report` returns the scene, the
+  full render configuration including Cycles and EEVEE, datablock counts,
+  preferences, file paths, linked libraries and registered handlers.
+  `blender_set_setting` writes one setting by dotted path and reports the old and
+  new value. `blender_blend_contents` inventories every datablock with users and
+  orphans, `blender_scripts_and_texts` finds embedded texts and script files,
+  `blender_filesystem` browses files inside safe roots, `blender_python_env`
+  reports the interpreter and module availability, `blender_render_report` shows
+  what a render would actually use, and `blender_diagnose` gives a quick health
+  report.
+
+### Fixed
+
+- `view3d_override` took a 3D viewport area from `bpy.data.screens` when no
+  screen was in context, which raised "Area set with window & screen set to
+  None". It now only ever pairs an area with the window and screen that own it.
+- `bpy.context.selected_objects` does not exist in the bridge's timer context, so
+  selection helpers now track state through the view layer.
+- Shader and group sockets such as `NodeSocketShader` have no `default_value`;
+  writing one raised. Reads and writes now go through helpers that tolerate them.
+- Building a shader no longer leaves two Material Output nodes: the default one
+  left by `use_nodes` is removed, which previously left the real output
+  disconnected from the surface.
+- `bpy.ops.object.keyframe_insert` and `driver_add` wanted -1 rather than None to
+  mean "all components".
+- Settings and preference reports are now version-tolerant: a field renamed
+  between Blender releases yields null instead of aborting the whole report.
+- Exporting to a `.glb` reported the format as `GLTF`; the binary container is
+  now reported as `GLB`.
+
 ## [2.0.0] - 2026-09-26
 
 Model validation, procedural texture generation and batching. 46 tools -> 69.

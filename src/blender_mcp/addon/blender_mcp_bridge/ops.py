@@ -28,7 +28,7 @@ def _active(objects: Sequence[bpy.types.Object]):
     """Make ``objects`` the active + selected set for the duration of a block."""
     view_layer = bpy.context.view_layer
     previous = bpy.context.view_layer.objects.active
-    for ob in bpy.context.selected_objects:
+    for ob in bpy.context.view_layer.objects:
         ob.select_set(False)
     for ob in objects:
         try:
@@ -65,7 +65,8 @@ def _byname(name: str) -> bpy.types.Object:
 
 def _ensure_object_mode() -> None:
     if bpy.context.mode != "OBJECT":
-        bpy.ops.object.mode_set(mode="OBJECT")
+        with view3d_override():
+            bpy.ops.object.mode_set(mode="OBJECT")
 
 
 def _in_edit(ob: bpy.types.Object, fn):
@@ -106,7 +107,7 @@ def set_context(params: dict) -> dict:
         result["active_collection"] = col.name
     if params.get("active"):
         ob = _byname(str(params["active"]))
-        for other in bpy.context.selected_objects:
+        for other in bpy.context.view_layer.objects:
             other.select_set(False)
         ob.select_set(True)
         bpy.context.view_layer.objects.active = ob
@@ -116,7 +117,7 @@ def set_context(params: dict) -> dict:
         names = [names] if isinstance(names, str) else list(names)
         picked = [bpy.data.objects[n] for n in names if n in bpy.data.objects]
         missing = [n for n in names if n not in bpy.data.objects]
-        for ob in bpy.context.selected_objects:
+        for ob in bpy.context.view_layer.objects:
             ob.select_set(False)
         for ob in picked:
             ob.select_set(True)
@@ -131,7 +132,8 @@ def set_context(params: dict) -> dict:
             raise CommandError("cannot set a mode without an active object")
         if params["mode"] == "EDIT" and target.type != "MESH":
             raise CommandError(f"{target.name} is {target.type}, not a mesh")
-        bpy.ops.object.mode_set(mode=params["mode"])
+        with view3d_override():
+            bpy.ops.object.mode_set(mode=params["mode"])
         result["mode"] = bpy.context.mode
     result["mode_now"] = bpy.context.mode
     return result
@@ -185,7 +187,7 @@ def select_by(params: dict) -> dict:
     limit_n = int(params.get("limit", 500))
     matched = matched[:limit_n]
     _ensure_object_mode()
-    for ob in bpy.context.selected_objects:
+    for ob in bpy.context.view_layer.objects:
         ob.select_set(False)
     for ob in matched:
         ob.select_set(True)

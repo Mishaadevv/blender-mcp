@@ -429,6 +429,150 @@ def main() -> int:
     # wm.read_homefile from the bridge timer can block Blender indefinitely.
     # The guard itself is exercised manually; see README "Known limits".
 
+    print("\n15. materials and shaders")
+    check("preset material assigns", lambda: assert_true(
+        "GeoTarget" in BRIDGE.call("create_material_preset", {
+            "name": "SelftestPaint", "preset": "car_paint",
+            "assign": ["GeoTarget"]}, timeout=120)["objects"], "assigned"))
+    check("preset rejects an unknown name", lambda: _expect_error(
+        BRIDGE.call, "create_material_preset",
+        {"name": "X", "preset": "unobtainium"}, needle="unknown preset"))
+    check("procedural material builds a graph", lambda: assert_true(
+        BRIDGE.call("procedural_material", {
+            "name": "SelftestProc", "pattern": "voronoi", "metallic": 0.5,
+            "assign": ["GeoTarget"]}, timeout=180)["nodes"] >= 6, "graph built"))
+    check("custom shader graph links", lambda: assert_true(
+        BRIDGE.call("build_shader", {
+            "name": "SelftestGraph",
+            "nodes": [{"id": "tc", "type": "uv"},
+                      {"id": "nz", "type": "noise", "inputs": {"Scale": 5.0}},
+                      {"id": "em", "type": "emission", "inputs": {"Strength": 2.0}},
+                      {"id": "out", "type": "output"}],
+            "links": [["tc", "UV", "nz", "Vector"],
+                      ["nz", "Fac", "em", "Color"],
+                      ["em", "Emission", "out", "Surface"]]},
+            timeout=180)["links"] == 3, "3 links"))
+    check("shader graph reports bad sockets", lambda: assert_true(
+        len(BRIDGE.call("build_shader", {
+            "name": "SelftestBad",
+            "nodes": [{"id": "n", "type": "noise", "inputs": {"NoSuchSocket": 1}}]},
+            timeout=180)["problems"]) >= 1, "problem reported, not raised"))
+    check("shader info lists the graph", lambda: assert_true(
+        len(BRIDGE.call("shader_info", {"name": "SelftestGraph"},
+                        timeout=120)["nodes"]) == 4, "4 nodes"))
+    check("set a shader input by name", lambda: assert_true(
+        BRIDGE.call("set_shader_input", {
+            "material": "SelftestGraph", "node": "nz", "socket": "Scale",
+            "value": 42.0}, timeout=120)["value"] == 42.0, "scale set"))
+    check("set a missing shader input is an error", lambda: _expect_error(
+        BRIDGE.call, "set_shader_input", {"material": "SelftestGraph", "node": "nz",
+                                          "socket": "Nope", "value": 1},
+        needle="no input"))
+    check("world sky shader", lambda: assert_true(
+        BRIDGE.call("world_shader", {"type": "sky", "sun_elevation": 30},
+                    timeout=120)["type"] == "sky", "sky built"))
+    check("world gradient shader", lambda: assert_true(
+        BRIDGE.call("world_shader", {"type": "gradient"}, timeout=120)["type"]
+        == "gradient", "gradient built"))
+    check("vertex colours paint", lambda: assert_true(
+        BRIDGE.call("paint_vertex_colors", {"object": "GeoTarget"},
+                    timeout=120)["vertices"] > 0, "colours written"))
+    check("material report", lambda: assert_true(
+        BRIDGE.call("material_report", {"limit": 50}, timeout=120)["count"] > 0,
+        "materials listed"))
+
+    print("\n16. animation")
+    check("insert a keyframe", lambda: assert_true(
+        BRIDGE.call("keyframe_channel", {"object": "GeoTarget",
+                                         "data_path": "location", "frame": 1},
+                    timeout=120)["action"], "action created"))
+    check("fill a frame range", lambda: assert_true(
+        BRIDGE.call("keyframe_channel", {"object": "GeoTarget",
+                                         "data_path": "rotation_euler", "frame": 1,
+                                         "frame_end": 24, "step": 4},
+                    timeout=120)["extra_keys"] == 5, "5 extra keys"))
+    check("actions are listed", lambda: assert_true(
+        BRIDGE.call("actions_list", {}, timeout=120)["count"] >= 1, "action found"))
+    check("interpolation is applied", lambda: assert_true(
+        BRIDGE.call("curves", {"op": "interpolation", "object": "GeoTarget",
+                               "interpolation": "LINEAR"}, timeout=120)["keys_changed"] > 0,
+        "keys changed"))
+    check("curve modifier added", lambda: assert_true(
+        len(BRIDGE.call("curves", {"op": "add_modifier", "object": "GeoTarget",
+                                    "modifier": "CYCLES"}, timeout=120)["added"]) > 0,
+        "cycles added"))
+    check("a driver with an expression", lambda: assert_true(
+        "sin" in BRIDGE.call("driver", {
+            "op": "add", "object": "GeoTarget", "data_path": "scale", "index": 0,
+            "expression": "1 + 0.1*sin(frame/5)"}, timeout=120)["expression"],
+        "driver added"))
+    check("shape key added", lambda: assert_true(
+        BRIDGE.call("shape_keys", {"op": "add", "object": "GeoTarget",
+                                   "key": "SelftestKey"}, timeout=120)["vertices"] > 0,
+        "key created"))
+    check("camera orbit keys the camera", lambda: assert_true(
+        BRIDGE.call("camera_move", {"mode": "orbit", "frames": 6},
+                    timeout=180)["frame_end"] == 6,
+        "6 frames keyed"))
+    check("timeline range set", lambda: assert_true(
+        BRIDGE.call("timeline", {"op": "set", "start": 1, "end": 48, "fps": 24},
+                    timeout=120)["fps"] == 24, "fps set"))
+    check("timeline marker added", lambda: assert_true(
+        BRIDGE.call("timeline", {"op": "add_marker", "name": "Selftest", "frame": 12},
+                    timeout=120)["frame"] == 12, "marker added"))
+    check("nla pushes the current action", lambda: assert_true(
+        BRIDGE.call("nla", {"op": "push",
+                            "object": BRIDGE.call("render_report", {})["camera"]},
+                    timeout=180)["track"], "track created"))
+    check("unknown curve op rejected", lambda: _expect_error(
+        BRIDGE.call, "curves", {"op": "levitate", "object": "GeoTarget"},
+        needle="unknown curve op"))
+
+    print("\n17. project inspection")
+    check("settings report groups", lambda: assert_true(
+        {"scene", "render", "data", "preferences"} <= set(
+            BRIDGE.call("settings_report", {}, timeout=180)), "all groups"))
+    check("settings_set changes one value", lambda: assert_true(
+        BRIDGE.call("settings_set", {"group": "render", "path": "resolution_x",
+                                     "value": 1234}, timeout=120)["after"] == 1234,
+        "resolution set"))
+    check("settings_set rejects a bad path", lambda: _expect_error(
+        BRIDGE.call, "settings_set", {"group": "render", "path": "nope", "value": 1},
+        needle="no such attribute"))
+    check("blend contents inventories datablocks", lambda: assert_true(
+        BRIDGE.call("blend_contents", {"types": ["meshes", "materials"]},
+                    timeout=180)["collections"]["meshes"]["count"] > 0, "counted"))
+    check("diagnose runs", lambda: assert_true(
+        "problems" in BRIDGE.call("diagnose", {}, timeout=120), "diagnosed"))
+    check("python env probes a module", lambda: assert_true(
+        "version" in BRIDGE.call("python_env", {"modules": ["numpy"]},
+                                 timeout=120)["modules"]["numpy"], "numpy found"))
+    check("filesystem is sandboxed", lambda: _expect_error(
+        BRIDGE.call, "filesystem", {"path": "C:\\Windows", "limit": 1},
+        needle="outside the allowed roots"))
+    check("scripts and texts listed", lambda: assert_true(
+        "texts" in BRIDGE.call("scripts_and_texts", {}, timeout=180), "listed"))
+
+    print("\n18. assets, add-ons, packages")
+    check("libraries listed", lambda: assert_true(
+        BRIDGE.call("list_libraries", {}, timeout=120)["libraries"], "polyhaven"))
+    check("addons listed", lambda: assert_true(
+        BRIDGE.call("addons_list", {}, timeout=180)["count"] > 0, "addons found"))
+    check("packages listed", lambda: assert_true(
+        "sys_path" in BRIDGE.call("packages_list", {}, timeout=180), "pip ran"))
+    check("addon install needs confirmation", lambda: _expect_error(
+        BRIDGE.call, "addons_manage", {"addon": "x", "action": "install",
+                                       "path": "x.zip"}, needle="confirm=true"))
+    check("pip install needs confirmation", lambda: _expect_error(
+        BRIDGE.call, "packages_install", {"package": "scipy"}, needle="confirm=true"))
+    check("download rejects a bad scheme", lambda: _expect_error(
+        BRIDGE.call, "download", {"url": "file:///C:/Windows/System32/config/SAM"},
+        needle="refusing URL scheme"))
+    check("export to a temp glb", lambda: assert_true(
+        BRIDGE.call("export_asset", {
+            "path": str(Path(os.environ.get("TEMP", "/tmp")) / "selftest_export.glb"),
+            "objects": ["GeoTarget"]}, timeout=300)["format"] == "GLB", "glb written"))
+
     BRIDGE.shutdown()
 
     failures = [r for r in results if r[0] == FAIL]
