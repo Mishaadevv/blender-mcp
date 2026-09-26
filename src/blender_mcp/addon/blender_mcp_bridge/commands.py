@@ -1463,6 +1463,11 @@ def cmd_auto_validate(params):
     return auto_validate_after_edit(objs, quick)
 
 
+def cmd_get_quality_guidelines(params):
+    from .quality_guidelines import QUALITY_SYSTEM_PROMPT
+    return {"system_prompt": QUALITY_SYSTEM_PROMPT}
+
+
 def cmd_shade_smooth(params):
     objs = objs_of(params.get("objects"), "MESH")
     return set_shade_smooth(objs, bool(params.get("smooth", True)),
@@ -2806,4 +2811,5 @@ HANDLERS = {
     "camera_focus": cmd_camera_focus,
     "fix_topology": cmd_fix_topology,
     "auto_validate": cmd_auto_validate,
+    "get_quality_guidelines": cmd_get_quality_guidelines,
 }

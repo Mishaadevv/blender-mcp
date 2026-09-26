@@ -16,6 +16,7 @@ from pydantic import Field
 
 from .client import BRIDGE, BlenderError
 from .formatting import failure, respond
+from .addon.blender_mcp_bridge.quality_guidelines import QUALITY_SYSTEM_PROMPT
 
 INSTRUCTIONS = """
 Control a running Blender 4.5 LTS instance over its local MCP bridge.
@@ -39,7 +40,7 @@ Start here:
 7. `blender_save_blend` to persist.
 
 Speed:
-- `blender_batch` runs many commands in ONE round trip. Use it to build
+- `blender_batch` runs many commands in a single round trip. Use it to build
   anything repetitive; a 40-step scene is one call instead of forty.
 - `blender_select_by` finds objects by predicate (loose geometry, no UVs,
   too large, by material) instead of by name, which is what you want on a
@@ -54,12 +55,14 @@ Escape hatches when no dedicated tool fits:
   (bpy, bmesh, mathutils, math, json, os are pre-imported).
 - `blender_run_operator` invokes any bpy.ops operator.
 - `blender_list_operators` / `blender_search_api` discover the exact
-  operator names and properties available in this Blender build.
+  operator names and property names of the Blender build it is talking to, instead of
+  relying on the model's memory.
 
 Always look at the result of a change before the next step - `blender_capture_viewport`
 returns an image you can actually see. Units are Blender units (1.0 = 1 m).
 Coordinates are Z-up, rotation is in degrees.
-""".strip()
+
+""" + QUALITY_SYSTEM_PROMPT
 
 mcp = MCPServer(
     name="blender",
