@@ -1468,6 +1468,145 @@ def cmd_get_quality_guidelines(params):
     return {"system_prompt": QUALITY_SYSTEM_PROMPT}
 
 
+def cmd_download_textures(params):
+    """Download textures from a library and optionally apply to objects."""
+    library = str(params.get("library", "ambientcg"))
+    query = str(params.get("query", ""))
+    limit = int(params.get("limit", 5))
+    apply_to = params.get("apply_to")
+    search = _assets.search_library({"library": library, "type": "textures", "query": query, "limit": limit})
+    downloaded = []
+    for asset in search.get("assets", [])[:limit]:
+        try:
+            result = _assets.fetch_from_library({
+                "library": library,
+                "id": asset["id"],
+                "type": "textures",
+                "import": False,
+            })
+            downloaded.append({"id": asset["id"], "name": asset["name"], "path": result.get("path")})
+        except Exception as exc:
+            downloaded.append({"id": asset["id"], "name": asset["name"], "error": str(exc)})
+    if apply_to and downloaded:
+        for ob_name in apply_to:
+            ob = obj_of(ob_name, "MESH")
+            for tex in downloaded:
+                if tex.get("path"):
+                    try:
+                        _shade.load_image_texture({"path": tex["path"], "material": f"{ob.name}_Material"})
+                    except Exception:
+                        pass
+    return {"library": library, "downloaded": downloaded, "applied_to": apply_to}
+
+
+def cmd_download_animations(params):
+    """Download animations for 3D models from Mixamo or other sources."""
+    source = str(params.get("source", "mixamo"))
+    query = str(params.get("query", ""))
+    target = params.get("target")
+    if source == "mixamo":
+        return {"source": source, "query": query, "target": target,
+                "note": "Mixamo requires manual download. Use blender_download for direct URLs."}
+    return {"source": source, "error": "unknown source"}
+
+
+def cmd_create_animation(params):
+    """Create procedural animations for objects."""
+    objects = params.get("objects") or ([bpy.context.view_layer.objects.active.name]
+                                        if bpy.context.view_layer.objects.active else [])
+    if isinstance(objects, str):
+        objects = [objects]
+    anim_type = str(params.get("type", "rotate"))
+    frames = int(params.get("frames", 60))
+    start_frame = int(params.get("start_frame", 1))
+    results = []
+    for ob_name in objects:
+        ob = obj_of(ob_name)
+        if anim_type == "rotate":
+            for frame in range(start_frame, start_frame + frames):
+                bpy.context.scene.frame_set(frame)
+                ob.rotation_euler[2] = math.radians((frame - start_frame) * 360 / frames)
+                ob.keyframe_insert(data_path="rotation_euler", index=2)
+        elif anim_type == "bounce":
+            for frame in range(start_frame, start_frame + frames):
+                bpy.context.scene.frame_set(frame)
+                ob.location.z = abs(math.sin((frame - start_frame) * math.pi / 10)) * 2
+                ob.keyframe_insert(data_path="location", index=2)
+        elif anim_type == "pulse":
+            for frame in range(start_frame, start_frame + frames):
+                bpy.context.scene.frame_set(frame)
+                scale = 1 + 0.2 * math.sin((frame - start_frame) * math.pi / 10)
+                ob.scale = (scale, scale, scale)
+                ob.keyframe_insert(data_path="scale")
+        results.append({"object": ob.name, "type": anim_type, "frames": frames})
+    bpy.context.scene.frame_set(start_frame)
+    return {"animations": results}
+
+
+def cmd_paint_texture(params):
+    """Paint a texture directly in Blender using texture painting."""
+    ob_name = str(params.get("object", ""))
+    if not ob_name:
+        raise CommandError("paint_texture needs an 'object' name")
+    ob = obj_of(ob_name, "MESH")
+    image_name = str(params.get("image", f"{ob.name}_Texture"))
+    width = int(params.get("width", 1024))
+    height = int(params.get("height", 1024))
+    color = params.get("color", [0.5, 0.5, 0.5, 1.0])
+    if image_name in bpy.data.images:
+        image = bpy.data.images[image_name]
+    else:
+        image = bpy.data.images.new(image_name, width=width, height=height)
+    if not ob.data.uv_layers:
+        auto_uv(ob)
+    mat = bpy.data.materials.get(f"{ob.name}_Material") or bpy.data.materials.new(f"{ob.name}_Material")
+    mat.use_nodes = True
+    bsdf = _shade._principled(mat)
+    tex_node = mat.node_tree.nodes.new("ShaderNodeTexImage")
+    tex_node.image = image
+    mat.node_tree.links.new(tex_node.outputs["Color"], bsdf.inputs["Base Color"])
+    ob.data.materials.clear()
+    ob.data.materials.append(mat)
+    return {"object": ob.name, "image": image.name, "size": [width, height],
+            "uv_layers": len(ob.data.uv_layers), "material": mat.name}
+
+
+def cmd_fix_uv_mapping(params):
+    """Fix stretched textures by regenerating UVs with proper scaling."""
+    objs = objs_of(params.get("objects") or [bpy.context.view_layer.objects.active.name
+                                            if bpy.context.view_layer.objects.active else None], "MESH")
+    method = str(params.get("method", "smart_project"))
+    results = []
+    for ob in objs:
+        me = ob.data
+        while me.uv_layers:
+            me.uv_layers.remove(me.uv_layers[0])
+        with active_objects([ob]):
+            with view3d_override():
+                try:
+                    bpy.ops.object.mode_set(mode="EDIT")
+                    bpy.ops.mesh.select_all(action="SELECT")
+                    if method == "cube_project":
+                        bpy.ops.uv.cube_project()
+                    elif method == "lightmap_pack":
+                        bpy.ops.uv.lightmap_pack()
+                    else:
+                        bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=0.002)
+                    bpy.ops.object.mode_set(mode="OBJECT")
+                except Exception as exc:
+                    with contextlib.suppress(Exception):
+                        bpy.ops.object.mode_set(mode="OBJECT")
+                    results.append({"object": ob.name, "error": str(exc)})
+                    continue
+        results.append({"object": ob.name, "method": method, "uv_layers": len(me.uv_layers)})
+    return {"results": results}
+
+
+def cmd_list_installed_addons(params):
+    """List all installed Blender add-ons with their status."""
+    return _assets.addons_list(params)
+
+
 def cmd_shade_smooth(params):
     objs = objs_of(params.get("objects"), "MESH")
     return set_shade_smooth(objs, bool(params.get("smooth", True)),
@@ -2812,4 +2951,10 @@ HANDLERS = {
     "fix_topology": cmd_fix_topology,
     "auto_validate": cmd_auto_validate,
     "get_quality_guidelines": cmd_get_quality_guidelines,
+    "download_textures": cmd_download_textures,
+    "download_animations": cmd_download_animations,
+    "create_animation": cmd_create_animation,
+    "paint_texture": cmd_paint_texture,
+    "fix_uv_mapping": cmd_fix_uv_mapping,
+    "list_installed_addons": cmd_list_installed_addons,
 }

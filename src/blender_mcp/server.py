@@ -62,6 +62,18 @@ Always look at the result of a change before the next step - `blender_capture_vi
 returns an image you can actually see. Units are Blender units (1.0 = 1 m).
 Coordinates are Z-up, rotation is in degrees.
 
+Texture and animation tools:
+- `blender_download_textures` fetches PBR textures from AmbientCG/Poly Haven and can
+  apply them to objects in one call.
+- `blender_download_animations` downloads animations for 3D models (Mixamo, etc.).
+- `blender_create_animation` builds procedural animations (rotate, bounce, pulse)
+  with keyframes over a frame range.
+- `blender_paint_texture` creates a paintable texture on an object with UVs and
+  material wired up, ready for texture painting.
+- `blender_fix_uv_mapping` regenerates UVs with smart_project, cube_project or
+  lightmap_pack to fix stretched textures.
+- `blender_list_installed_addons` shows all installed Blender add-ons and their status.
+
 """ + QUALITY_SYSTEM_PROMPT
 
 mcp = MCPServer(

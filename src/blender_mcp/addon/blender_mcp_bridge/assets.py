@@ -404,6 +404,31 @@ def _search_ambientcg(query: str, limit: int, kind: str) -> dict:
     return {"library": "ambientcg", "type": kind, "count": len(rows), "assets": rows}
 
 
+def _fetch_ambientcg(asset_id: str, kind: str, params: dict) -> dict:
+    """Download an AmbientCG asset (CC0 PBR materials, models)."""
+    data = _api_get(f"https://ambientcg.com/api/v2/full_json?include=downloadData&q={asset_id}")
+    assets = data.get("foundAssets", [])
+    if not assets:
+        raise CommandError(f"no AmbientCG asset found for {asset_id!r}")
+    downloads = assets[0].get("downloadData", [])
+    if not downloads:
+        raise CommandError(f"no download links for AmbientCG asset {asset_id!r}")
+    url = downloads[0].get("downloadLink", "")
+    if not url:
+        raise CommandError(f"no download URL for AmbientCG asset {asset_id!r}")
+    ext = os.path.splitext(url)[1] or ".zip"
+    target = os.path.join(_root(f"ambientcg/{kind}"), f"{asset_id}{ext}")
+    result = _download(url, target, int(params.get("max_bytes", DEFAULT_MAX_BYTES)),
+                       float(params.get("timeout", 180.0)))
+    result["asset_id"] = asset_id
+    result["library"] = "ambientcg"
+    result["type"] = kind
+    if params.get("import", True) and ext.lower() not in {".zip"}:
+        imported = import_asset({"path": target, "into_collection": params.get("into_collection")})
+        result["imported"] = imported
+    return result
+
+
 def _search_key_required(library: str, query: str, limit: int, kind: str, api_key: str) -> dict:
     """Search a library that requires an API key (Sketchfab, CGTrader, TurboSquid)."""
     if not api_key:
@@ -430,8 +455,11 @@ def _search_key_required(library: str, query: str, limit: int, kind: str, api_ke
 
 def _fetch_ambientcg(asset_id: str, kind: str, params: dict) -> dict:
     """Download an AmbientCG asset (CC0 PBR materials, models)."""
-    data = _api_get(f"https://ambientcg.com/api/v2/downloads/{asset_id}")
-    downloads = data.get("downloads", [])
+    data = _api_get(f"https://ambientcg.com/api/v2/full_json?include=downloadData&q={asset_id}")
+    assets = data.get("foundAssets", [])
+    if not assets:
+        raise CommandError(f"no AmbientCG asset found for {asset_id!r}")
+    downloads = assets[0].get("downloadData", [])
     if not downloads:
         raise CommandError(f"no download links for AmbientCG asset {asset_id!r}")
     url = downloads[0].get("downloadLink", "")
