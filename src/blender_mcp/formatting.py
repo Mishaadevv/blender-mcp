@@ -103,6 +103,23 @@ def to_json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2, default=str)
 
 
+def document(text: str, response_format: str = "markdown",
+             title: str | None = None) -> CallToolResult:
+    """Return a long document verbatim.
+
+    `respond` formats values for human reading in a terminal, and its scalar
+    formatter caps any string at 200 characters so that a 19k-character
+    guideline document came back as "first 197 chars...". A tool that returns a
+    document has to bypass that: the length is the payload.
+    """
+    if response_format == "json":
+        body = json.dumps({"document": text}, ensure_ascii=False, indent=2)
+    else:
+        body = text if not title else f"# {title}\n\n{text}"
+    return CallToolResult(content=[TextContent(type="text", text=body)],
+                          structured_content=None)
+
+
 def respond(data: Any, response_format: str = "markdown", title: str | None = None,
             image_path: str | None = None, note: str | None = None) -> CallToolResult:
     """Build a tool result, optionally attaching a rendered image."""

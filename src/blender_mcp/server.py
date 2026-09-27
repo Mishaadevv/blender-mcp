@@ -15,7 +15,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from .client import BRIDGE, BlenderError
-from .formatting import failure, respond
+from .formatting import document, failure, respond
 
 # The agent-facing system prompt lives in one module. It used to be three strings
 # concatenated from two files, with the same rules restated in different words in
@@ -2577,9 +2577,20 @@ def blender_quality_guidelines(
     believable: real proportions instead of convenient ones, built structure
     rather than modifier stacks, deliberate camera and lighting before a render,
     and texture resolution that survives a close-up.
+
+    Served from the server's own copy of the prompt. Asking the addon for it
+    only worked when the addon happened to sit inside the source tree; from the
+    installed location it could not resolve the package and silently returned a
+    placeholder, so the agent got 200 characters of nothing useful.
     """
-    return respond(call("get_quality_guidelines", {"query": query, "limit": limit}),
-                   response_format, title="Quality guidelines")
+    text = SYSTEM_PROMPT
+    if query.strip():
+        needle = query.strip().lower()
+        hits = [blk for blk in text.split("\n\n")
+                if needle in blk.lower() or any(needle in ln.lower() for ln in blk.splitlines())]
+        text = "\n\n".join(hits[:limit]) if hits else (
+            f"No section matched {query!r}. Full guidelines follow.\n\n{SYSTEM_PROMPT}")
+    return document(text, response_format, title="Quality guidelines")
 
 
 @mcp.tool(annotations=WRITE)

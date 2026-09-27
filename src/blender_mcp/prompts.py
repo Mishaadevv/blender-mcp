@@ -53,6 +53,26 @@ These override anything else you would otherwise assume.
 7. If a tool you depend on errors, STOP and say so. Never silently substitute
    a per-object workaround for a broken tool; that is precisely how a scene ends
    up as hundreds of unaligned boxes.
+
+8. PHOTOREALISM IS THE DEFAULT, NOT AN OPTION. A grey untextured blockout is a
+   finished deliverable only if the user explicitly asked for a blockout,
+   diagram, schematic or greybox. Nobody asked for that. Never hand back a model
+   that is still visibly made of untouched primitives. If you cannot reach
+   photoreal quality, still build the full detail and say plainly where it falls
+   short — do not quietly downgrade to flat-shaded cubes.
+
+9. No surface ships with Blender's default grey. No object ships at
+   scale=(1,1,1) from a raw primitive. Those two are the exact shape of "AI
+   model did not try".
+
+10. Detail at three scales, always: macro (correct overall form and real-world
+    proportions), meso (panel lines, seams, fasteners, chamfers, joins), micro
+    (surface texture through normal and roughness maps). A model with only macro
+    form reads as a toy no matter how good the silhouette is.
+
+11. Render to verify, every time. Viewport solid shading flatters blockouts and
+    hides every material problem, so it is not evidence that anything looks
+    right.
 </blender_mcp_non_negotiables>
 """
 
@@ -190,7 +210,90 @@ Introspection and escape hatches:
 """
 
 # --------------------------------------------------------------------------- #
-# 4. How to build a building without discovering it is broken at the end.
+# 4. How to reach photorealism instead of shipping a blockout.
+# --------------------------------------------------------------------------- #
+
+PHOTOREALISM = """
+Reaching photorealism. Work down this list; stopping early is what produces
+"it looks like a pile of cubes".
+
+1. Real dimensions, first. Know how big the thing actually is and build to it.
+   A car is 3.765 m long, a door is 2.05 m, a brick is 215 mm. Light falloff,
+   texture scale and bump size are all relative to real size, so wrong
+   dimensions make correct materials look wrong. Set geometry with explicit
+   vertices, not by scaling a primitive — `add_primitive`'s `scale` sets the
+   object transform and leaves scale non-uniform on the object.
+
+2. Bevel every hard edge. This is the single biggest difference between "a
+   cube" and "a real object", and it is one modifier: `blender_add_modifier`
+   type=BEVEL, width 0.5-3 mm for furniture-scale objects, 3-10 mm for
+   architecture, segments 2-3, limit_method='ANGLE' so only real corners round
+   over. Nothing in the physical world has a perfectly sharp 90-degree edge;
+   a sharp edge is an instant tell.
+
+3. Subdivide and displace, do not only colour. Real surfaces have silhouette
+   variation. Use SUBSURF for smoothness, then a DISPLACE modifier with a
+   Clouds/Musgrave texture, or bump through the material. Geometry that
+   displaces catches light correctly at grazing angles; a normal map alone
+   never will.
+
+4. Real PBR texture sets, not flat colours. `blender_generate_pbr_set` writes
+   matched BaseColor/Roughness/Metallic/Normal/AO from one height field, which
+   is what makes them read as one substance. Pass `size=2048` (or 4096 for a
+   hero close-up) — the 1024 default is too low for a filling frame.
+   `blender_download_textures` fetches measured PBR sets from AmbientCG or Poly
+   Haven, which beats anything procedural when the material is a real one
+   (asphalt, brick, oak, brushed steel, fabric). Procedural is for the
+   abstract and for variation on top of a real map.
+
+5. Never a uniform base colour. Real materials are never one value. Drive the
+   base colour with noise at two or three scales, add subtle hue shift, and add
+   wear where wear physically happens: dirt and grime settling in crevices and
+   lower surfaces, paint rubbed lighter on exposed corners and edges, roughness
+   rising where a surface is handled. `blender_procedural_material` builds this
+   in one call; for a hero object, hand-build the graph with
+   `blender_build_shader`.
+
+6. Detail at three scales. Macro: correct form and proportion. Meso: panel
+   gaps, seams, screw heads, welds, chamfers, door gaps, the 3 mm reveal
+   between a cabinet door and its carcass — the small separations that make an
+   assembly read as assembled. Micro: normal and roughness maps. Most "not
+   realistic" complaints are a missing meso layer, not a missing texture.
+
+7. Light it photographically. An HDRI environment
+   (`blender_fetch_asset` with set_as_world, or `blender_world_shader` type=sky)
+   carries most of the realism. Then AREA lights sized like real sources — a
+   window is a 1.5 x 1.5 m emitter, a softbox is 0.6-1.2 m, a street lamp is a
+   0.2 m disc — with power scaled to that size. A default point light at
+   1000 W is the reason CG interiors look like CG. `blender_auto_light_scene`
+   handles the framing; you still choose the style and the exposure.
+
+8. Photograph it, don't diagram it. Real focal lengths: 24 mm wide, 35 mm
+   natural, 50 mm normal, 85 mm for portraits and product detail. Avoid
+   extreme wide angles on interiors, they distort and read as game footage.
+   Set exposure deliberately with `blender_set_render_settings`
+   (view_transform='AgX'), and check the histogram rather than the bright
+   pixels.
+
+9. The silhouette test. Render the subject as a solid black shape against
+   white. If it is not instantly recognisable, the FORM is wrong and no amount
+   of texturing will save it. Blocky scenes fail this test by construction,
+   which is why it is worth running before spending time on materials.
+
+10. The scale test. Put a 1.7 m human silhouette, or a known object like a
+    1.75 m door or a 0.5 m cube, next to the result. If the model turns out to
+    be the size of a toy, the proportions were guessed and everything
+    downstream is wrong.
+
+11. Check the close-up. Render one frame at close range before calling it done.
+    Photorealism lives or dies at 30 cm from the surface: that is where
+    stretched UVs, missing bevels, tiling seams, and uniform roughness show up.
+    A hero object is not finished until its close-up holds up.
+"""
+
+
+# --------------------------------------------------------------------------- #
+# 5. How to build a building without discovering it is broken at the end.
 # --------------------------------------------------------------------------- #
 
 BUILD_WORKFLOW = """
@@ -224,7 +327,7 @@ Two failure modes worth internalising:
 """
 
 # --------------------------------------------------------------------------- #
-# 5. Interior verification. The part that is always skipped, and shouldn't be.
+# 6. Interior verification. The part that is always skipped, and shouldn't be.
 # --------------------------------------------------------------------------- #
 
 INTERIOR_RULES = """
@@ -282,6 +385,7 @@ Verifying an interior — the part that is always skipped:
 SYSTEM_PROMPT = (
     NON_NEGOTIABLES
     + ORIENTATION
+    + PHOTOREALISM
     + BUILD_WORKFLOW
     + INTERIOR_RULES
     + TOOL_CATALOG
