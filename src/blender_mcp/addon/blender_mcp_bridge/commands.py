@@ -817,22 +817,42 @@ def cmd_add_modifier(params):
 
 def modifier_summary(mod) -> dict:
     out = {"name": mod.name, "type": mod.type, "show_viewport": mod.show_viewport, "show_render": mod.show_render}
+
+    def get(attr, default=None):
+        # RNA property names drift between Blender versions. A summary must never
+        # be the thing that breaks a modifier call, so read everything defensively.
+        return getattr(mod, attr, default)
+
     if mod.type == "BEVEL":
-        out.update(width=mod.width, segments=mod.segments, limit_method=mod.limit_method)
+        out.update(width=get("width"), segments=get("segments"),
+                   limit_method=get("limit_method"))
     elif mod.type == "SUBSURF":
-        out.update(levels=mod.levels, render_levels=mod.render_levels)
+        out.update(levels=get("levels"), render_levels=get("render_levels"))
     elif mod.type == "ARRAY":
-        out.update(count=mod.count, relative_offset_factor=vec(mod.relative_offset_factor))
+        # Blender >=2.90 renamed relative_offset_factor to a bool + a vector pair.
+        out.update(
+            count=get("count"),
+            use_relative_offset=get("use_relative_offset"),
+            relative_offset_displace=vec(get("relative_offset_displace", (0.0, 0.0, 0.0))),
+            use_constant_offset=get("use_constant_offset"),
+            constant_offset_displace=vec(get("constant_offset_displace", (0.0, 0.0, 0.0))),
+            use_object_offset=get("use_object_offset"),
+        )
     elif mod.type == "SOLIDIFY":
-        out.update(thickness=mod.thickness, offset=mod.offset)
+        out.update(thickness=get("thickness"), offset=get("offset"))
     elif mod.type == "MIRROR":
-        out.update(axis=tuple(m for m, on in zip("XYZ", mod.use_axis) if on))
+        out.update(axis=tuple(m for m, on in zip("XYZ", get("use_axis", ())) if on),
+                   use_clip=get("use_clip"),
+                   mirror_object=(get("mirror_object").name
+                                  if get("mirror_object") else None))
     elif mod.type == "DISPLACE":
-        out.update(strength=mod.strength, mid_level=mod.mid_level)
+        out.update(strength=get("strength"), mid_level=get("mid_level"))
     elif mod.type == "SIMPLE_DEFORM":
-        out.update(deform_method=mod.deform_method, angle=mod.angle)
+        out.update(deform_method=get("deform_method"), angle=get("angle"))
     elif mod.type == "SHRINKWRAP":
-        out.update(target=mod.target.name if mod.target else None, wrap_method=mod.wrap_method)
+        target = get("target")
+        out.update(target=target.name if target else None,
+                   wrap_method=get("wrap_method"))
     return out
 
 

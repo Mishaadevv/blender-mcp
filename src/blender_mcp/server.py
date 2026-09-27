@@ -17,81 +17,17 @@ from pydantic import Field
 from .client import BRIDGE, BlenderError
 from .formatting import failure, respond
 
-# The quality guidelines are pure data and live with the addon so both sides read
-# one copy. That import must never be able to take the server down with it, so a
-# failure here degrades to "no extra guidance" instead of a dead server.
-try:
-    from .addon.blender_mcp_bridge.quality_guidelines import QUALITY_SYSTEM_PROMPT
-except Exception as _quality_error:  # noqa: BLE001
-    QUALITY_SYSTEM_PROMPT = ""
-    print(
-        "[blender-mcp] quality guidelines unavailable, continuing without them: "
-        f"{type(_quality_error).__name__}: {_quality_error}"
-    )
-
-INSTRUCTIONS = """
-Control a running Blender 4.5 LTS instance over its local MCP bridge.
-
-Start here:
-1. `blender_status`  - confirm the bridge is online, note the open .blend file.
-   If it says not connected, call `blender_setup` ONCE, then ask the user to
-   restart Blender (a --background Blender has no event loop and cannot work).
-2. `blender_get_scene` - survey what already exists before touching it.
-3. `blender_find_problems` - audit the model you are about to work on, or the
-   one you just built. Every finding comes with the tool call that fixes it.
-4. `blender_validate` - the full scored report (scale, dimensions vs a real
-   spec, normals, topology, intersections, symmetry, naming, materials, UVs,
-   transforms, pivots, budget, LODs, lighting, orphans).
-5. Build with `blender_add_primitive` / `blender_create_mesh` /
-   `blender_edit_mesh` / `blender_geometry` / `blender_add_modifier` /
-   `blender_create_material` / `blender_generate_pbr_set`.
-6. `blender_look_at` + `blender_set_render_settings` + `blender_render`, or
-   `blender_capture_viewport` for a fast visual check, or
-   `blender_render_extras` action='clay' for a near-instant preview.
-7. `blender_save_blend` to persist.
-
-Speed:
-- `blender_batch` runs many commands in a single round trip. Use it to build
-  anything repetitive; a 40-step scene is one call instead of forty.
-- `blender_select_by` finds objects by predicate (loose geometry, no UVs,
-  too large, by material) instead of by name, which is what you want on a
-  scene with hundreds of objects.
-- `blender_set_context` sets active object, selection, collection and mode
-  atomically, so an operator never runs against the wrong selection.
-- `blender_checkpoint` / `blender_undo` / `blender_redo` make experimentation
-  safe.
-
-Escape hatches when no dedicated tool fits:
-- `blender_execute_python` runs arbitrary Python on Blender's main thread
-  (bpy, bmesh, mathutils, math, json, os are pre-imported).
-- `blender_run_operator` invokes any bpy.ops operator.
-- `blender_list_operators` / `blender_search_api` discover the exact
-  operator names and property names of the Blender build it is talking to, instead of
-  relying on the model's memory.
-
-Always look at the result of a change before the next step - `blender_capture_viewport`
-returns an image you can actually see. Units are Blender units (1.0 = 1 m).
-Coordinates are Z-up, rotation is in degrees.
-
-Texture and animation tools:
-- `blender_download_textures` fetches PBR textures from AmbientCG/Poly Haven and can
-  apply them to objects in one call.
-- `blender_download_animations` downloads animations for 3D models (Mixamo, etc.).
-- `blender_create_animation` builds procedural animations (rotate, bounce, pulse)
-  with keyframes over a frame range.
-- `blender_paint_texture` creates a paintable texture on an object with UVs and
-  material wired up, ready for texture painting.
-- `blender_fix_uv_mapping` regenerates UVs with smart_project, cube_project or
-  lightmap_pack to fix stretched textures.
-- `blender_list_installed_addons` shows all installed Blender add-ons and their status.
-
-""" + QUALITY_SYSTEM_PROMPT
+# The agent-facing system prompt lives in one module. It used to be three strings
+# concatenated from two files, with the same rules restated in different words in
+# each copy. `prompts.SYSTEM_PROMPT` is ordered so the non-negotiables come first,
+# because some MCP clients truncate `instructions` from the end.
+from .prompts import SYSTEM_PROMPT
 
 mcp = MCPServer(
     name="blender",
     title="Blender 4.5 LTS",
     version="4.4.0",
-    instructions=INSTRUCTIONS,
+    instructions=SYSTEM_PROMPT,
 )
 
 FORMAT = Annotated[
