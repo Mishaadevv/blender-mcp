@@ -2,7 +2,7 @@
 
 # Blender MCP
 
-**Let an AI agent actually use your Blender.** Not a toy wrapper — a bridge into
+**Let an AI agent actually use your Blender.** Not a toy wrapper â€” a bridge into
 a live Blender 4.5 LTS session: modelling, materials, lighting, cameras, and
 renders handed back to the model as images it can look at.
 
@@ -67,7 +67,7 @@ Two things that matter on a big scene:
 
 Plus three escape hatches for everything else:
 `blender_execute_python`, `blender_run_operator`, and
-`blender_list_operators(include_properties=True)` — which reports the exact
+`blender_list_operators(include_properties=True)` â€” which reports the exact
 operator ids and property names of the Blender build it is talking to, instead of
 relying on the model's memory.
 
@@ -131,7 +131,7 @@ blender-mcp-setup
 
 It finds `blender.exe` (or `blender` on macOS/Linux), copies the addon into
 Blender's user addons folder, then lets **Blender itself** enable it and save the
-preference — so your other add-ons are left alone. Set `BLENDER_EXE` if Blender
+preference â€” so your other add-ons are left alone. Set `BLENDER_EXE` if Blender
 lives somewhere unusual.
 
 You can also skip this and let the agent do it: it will call `blender_setup` for
@@ -140,7 +140,7 @@ you when `blender_status` reports the addon is missing.
 ### 2. Point your client at it
 
 <details open>
-<summary><b>opencode</b> — <code>~/.config/opencode/opencode.jsonc</code></summary>
+<summary><b>opencode</b> â€” <code>~/.config/opencode/opencode.jsonc</code></summary>
 
 ```jsonc
 {
@@ -156,7 +156,7 @@ you when `blender_status` reports the addon is missing.
 </details>
 
 <details>
-<summary><b>Claude Code</b> — <code>.mcp.json</code> in your project</summary>
+<summary><b>Claude Code</b> â€” <code>.mcp.json</code> in your project</summary>
 
 ```json
 {
@@ -171,7 +171,7 @@ you when `blender_status` reports the addon is missing.
 </details>
 
 <details>
-<summary><b>Claude Desktop</b> — <code>claude_desktop_config.json</code></summary>
+<summary><b>Claude Desktop</b> â€” <code>claude_desktop_config.json</code></summary>
 
 ```json
 {
@@ -207,7 +207,7 @@ The bridge starts with Blender automatically. You should see
 ## How it works
 
 ```
-your agent ──stdio──▶ blender-mcp (python) ──TCP 127.0.0.1:9876──▶ Blender
+your agent â”€â”€stdioâ”€â”€â–¶ blender-mcp (python) â”€â”€TCP 127.0.0.1:9876â”€â”€â–¶ Blender
                        one request per          newline-delimited     bpy.app.timers
                        connection               JSON
 ```
@@ -220,7 +220,7 @@ populated context.
 
 Consequences worth knowing:
 
-- Commands can never interleave with a render or a modal dialog — the timer
+- Commands can never interleave with a render or a modal dialog â€” the timer
   simply does not run while the UI is busy, so a client gets a clean timeout
   instead of a corrupted file.
 - **`blender --background` is not supported.** It has no event loop, so timers
@@ -269,14 +269,14 @@ clients that support it will ask the user first.
 | `BLENDER_MCP_PORT` | `9876` | bridge port |
 | `BLENDER_MCP_TIMEOUT` | `300` | per-command timeout, seconds |
 | `BLENDER_MCP_ROOT` | home directory | base for relative file paths |
-| `BLENDER_MCP_ALLOWED_ROOTS` | — | `;`-separated roots; import/export/save outside them is refused |
-| `BLENDER_MCP_AUTOLAUNCH` | — | `1` starts Blender if none is running |
+| `BLENDER_MCP_ALLOWED_ROOTS` | â€” | `;`-separated roots; import/export/save outside them is refused |
+| `BLENDER_MCP_AUTOLAUNCH` | â€” | `1` starts Blender if none is running |
 | `BLENDER_EXE` | auto-detected | full path to the Blender executable |
 
 ## Security
 
 The socket binds to `127.0.0.1` only and has **no authentication**: any process
-on your machine can drive your Blender. That is a deliberate trade-off — the addon
+on your machine can drive your Blender. That is a deliberate trade-off â€” the addon
 exists precisely so an agent can control your Blender, and
 `blender_execute_python` intentionally grants full Python access.
 
@@ -309,14 +309,14 @@ Layout:
 
 ```
 src/blender_mcp/
-├── server.py       46 MCP tools
-├── client.py       socket client, Blender discovery, autolaunch
-├── setup.py        addon installer (also the blender-mcp-setup command)
-├── formatting.py   markdown/json rendering, MCP image blocks
-└── addon/blender_mcp_bridge/
-    ├── bridge.py   timer-driven socket transport
-    ├── commands.py the bpy/bmesh command layer
-    └── ui.py       sidebar panel and operators
+â”śâ”€â”€ server.py       46 MCP tools
+â”śâ”€â”€ client.py       socket client, Blender discovery, autolaunch
+â”śâ”€â”€ setup.py        addon installer (also the blender-mcp-setup command)
+â”śâ”€â”€ formatting.py   markdown/json rendering, MCP image blocks
+â””â”€â”€ addon/blender_mcp_bridge/
+    â”śâ”€â”€ bridge.py   timer-driven socket transport
+    â”śâ”€â”€ commands.py the bpy/bmesh command layer
+    â””â”€â”€ ui.py       sidebar panel and operators
 ```
 
 ## Known limitations
@@ -347,4 +347,4 @@ src/blender_mcp/
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT â€” see [LICENSE](LICENSE).

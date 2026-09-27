@@ -70,7 +70,14 @@ These override anything else you would otherwise assume.
     (surface texture through normal and roughness maps). A model with only macro
     form reads as a toy no matter how good the silhouette is.
 
-11. Render to verify, every time. Viewport solid shading flatters blockouts and
+11. NO PART OF THE SUBJECT MAY BE A RAW PRIMITIVE. This is the failure that
+    matters most, and it happens before any material is involved. A hull is not a
+    cube, a turret is not a sphere, a wheel is not a cylinder, a bottle is not a
+    lathe blank. If the main masses of your subject are still untouched
+    primitives, the model is not a draft — it is nothing. Beveling and texturing
+    a sphere does not make it a head.
+
+12. Render to verify, every time. Viewport solid shading flatters blockouts and
     hides every material problem, so it is not evidence that anything looks
     right.
 </blender_mcp_non_negotiables>
@@ -210,7 +217,72 @@ Introspection and escape hatches:
 """
 
 # --------------------------------------------------------------------------- #
-# 4. How to reach photorealism instead of shipping a blockout.
+# 4. Form before surface. The failure everyone actually hits.
+# --------------------------------------------------------------------------- #
+
+FORM_FIRST = """
+Getting the FORM right. This matters before any material, and it is where most
+generated models fail outright: a vehicle whose hull is a cube, whose turret is
+a sphere and whose wheels are cylinders is recognisable as nothing at all, and
+no amount of texture or bevel will rescue it. Aim at a clean, well-proportioned
+low-poly or semi-detailed model first; realism is a later pass, not a substitute
+for shape.
+
+1. Decompose before you build. List the subject's parts by name, with real
+   dimensions and their relationship to each other, before creating any
+   geometry. If you cannot name the parts, you do not understand the subject yet
+   and modelling will produce primitives. A tank is: hull with sloped frontal
+   plates, fenders, running gear (road wheels, drive sprocket, idler, return
+   rollers), a track loop, a turret with a mantlet and vision ports, hatches,
+   stowage, exhaust. A car is: body shell, greenhouse, doors with shut lines,
+   wheel arches, bumpers, lights. A chair is: seat, back, four legs, stretchers.
+
+2. The main masses get real silhouettes. Never leave the largest volumes as
+   untouched primitives. Angled, sloped or tapered surfaces — glacis plates, car
+   bodies, roof pitches, bottle shoulders, human limbs — must be built from
+   explicit vertices, from a profile that is extruded, or by moving vertices on
+   a subdivided box. A rotated cube is still a cube; bevel it and subdivide it
+   and it is still a cube with soft edges.
+
+3. Round-but-manufactured parts need a profile, not a sphere. Wheels, turrets,
+   domes, bottles, barrels, pulleys: take a half cross-section and revolve it
+   with `blender_geometry` operation=screw (or spin, or a Screw modifier), so the
+   silhouette comes from the profile. A revolved profile also gives you correct
+   edge loops for free, which is what makes shading and bevels behave.
+
+4. Use the right primitive for what it actually is. A cylinder is a correct
+   starting point for a barrel or a bollard. A cube is a correct starting point
+   for a machine housing. Neither is a correct starting point for an organic or
+   a designed form. When in doubt, build from vertices: `blender_create_mesh`
+   with explicit coordinates, or a profile plus `extrude`/`screw` in
+   `blender_geometry`.
+
+5. Proportions first, silhouette second, detail third. Get the relative sizes
+   right and the thing becomes recognisable while still being crude. Getting
+   detail onto a wrong silhouette wastes all of it. When you are unsure of a
+   proportion, state the assumption and the real-world number you based it on.
+
+6. GREEble at the meso scale once the form is right. The difference between a
+   bare low-poly and a convincing one is the middle layer: panel lines, hatches,
+   bolts, hinges, vents, tow hooks, exhausts, stowage, steps, lights, seams.
+   These are cheap once the form works, and they are what a viewer reads as
+   "someone actually modelled this".
+
+7. The silhouette test is the gate. Render the subject as flat black on white
+   and ask whether you could name it. If not, the form is wrong: go back to
+   step 2, do not go shopping for textures. Low-poly targets (a clean, correct,
+   readable silhouette) and semi-detailed targets (greebles, panel lines,
+   separated parts) are both legitimate; a primitive with a texture on it is
+   not.
+
+8. Keep parts separate. A subject is an assembly, not one merged blob. Separate
+   objects also let you instance repeated parts (wheels, road wheels, bolts,
+   track links) with an ARRAY modifier and keep editing them individually.
+"""
+
+
+# --------------------------------------------------------------------------- #
+# 5. How to reach photorealism instead of shipping a blockout.
 # --------------------------------------------------------------------------- #
 
 PHOTOREALISM = """
@@ -293,7 +365,7 @@ Reaching photorealism. Work down this list; stopping early is what produces
 
 
 # --------------------------------------------------------------------------- #
-# 5. How to build a building without discovering it is broken at the end.
+# 6. How to build a building without discovering it is broken at the end.
 # --------------------------------------------------------------------------- #
 
 BUILD_WORKFLOW = """
@@ -327,7 +399,7 @@ Two failure modes worth internalising:
 """
 
 # --------------------------------------------------------------------------- #
-# 6. Interior verification. The part that is always skipped, and shouldn't be.
+# 7. Interior verification. The part that is always skipped, and shouldn't be.
 # --------------------------------------------------------------------------- #
 
 INTERIOR_RULES = """
@@ -385,6 +457,7 @@ Verifying an interior — the part that is always skipped:
 SYSTEM_PROMPT = (
     NON_NEGOTIABLES
     + ORIENTATION
+    + FORM_FIRST
     + PHOTOREALISM
     + BUILD_WORKFLOW
     + INTERIOR_RULES

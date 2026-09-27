@@ -7,7 +7,7 @@ Install: Edit > Preferences > Add-ons > Install..., pick the
 bl_info = {
     "name": "MCP Bridge",
     "author": "local",
-    "version": (4, 4, 0),
+    "version": (4, 5, 0),
     "blender": (4, 2, 0),
     "location": "3D Viewport > Sidebar > MCP",
     "description": "Loopback socket bridge so an MCP server can drive this Blender instance",

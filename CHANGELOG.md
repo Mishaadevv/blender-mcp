@@ -4,6 +4,35 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.5.0] - 2026-09-27
+
+### Added
+- `FORM_FIRST` section in the agent system prompt, and a matching
+  non-negotiable: **no part of the subject may be a raw primitive.** Generated
+  models kept failing at form rather than surface — a vehicle whose hull was a
+  cube, turret a sphere and wheels cylinders is recognisable as nothing, and
+  neither textures nor bevels rescue that. The section covers decomposing the
+  subject into named parts with real dimensions before creating geometry;
+  building sloped, tapered and angled masses from explicit vertices, a profile
+  that is extruded, or vertex placement on a subdivided box rather than from a
+  rotated primitive; revolving a half-section for round-but-manufactured parts
+  so the silhouette comes from the profile and the edge loops come out right;
+  choosing a primitive only where it genuinely is that shape; getting
+  proportions before silhouette before detail; greebling at the meso scale once
+  the form works; keeping parts separate so repeated ones can be arrayed; and
+  using the silhouette test as a gate on form rather than on texture.
+- Two more non-negotiables: no surface ships with default grey or a raw
+  `scale=(1,1,1)` primitive, and detail at macro, meso and micro scale.
+
+### Fixed
+- `blender_quality_guidelines` returned 221 characters instead of the full
+  prompt. The addon resolved the shared text by a path relative to itself, which
+  only works inside the source tree and silently fell back to a placeholder from
+  the installed location, and the server then ran a 19k-character document
+  through a scalar formatter that caps strings at 200 characters. The tool now
+  answers from the server's own copy through the new `formatting.document()`,
+  which returns long text verbatim.
+
 ## [4.4.0] - 2026-09-26
 
 ### Fixed
